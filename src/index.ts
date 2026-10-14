@@ -14,7 +14,7 @@ import { createSafety } from "./safety.js";
 import type { ToolContext, ToolDefinition } from "./types.js";
 import { fail, pending, text } from "./utils/result.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
 const config = loadConfig(ALL_TOOLS);
 const audit = createAuditLog();
