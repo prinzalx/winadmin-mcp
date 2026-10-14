@@ -221,11 +221,12 @@ switches take effect without restarting the agent. Only *enabled* tools appear, 
 install Hermes sees the two governance tools until you switch things on.
 
 ```yaml
-# ~/.hermes/config.yaml   (Windows: C:\Users\<user>\.hermes\config.yaml)
+# ~/.hermes/config.yaml
 mcp_servers:
   winadmin:
     command: "node"
-    args: ["C:/BLOB/output/001/dist/index.js"]
+    # your checkout path to the build
+    args: ["<checkout>/dist/index.js"]
     # optional, e.g. for a leaner context window:
     # tools:
     #   exclude: ["get_windows_update"]
