@@ -228,6 +228,10 @@ Decline or dismissal means: nothing ran, nothing parks, and the agent is told ex
 switch **ask in agent** in the *Awaiting approval* header turns this off; a client that never
 declared the elicitation capability is never asked and falls back to parking automatically.
 
+Whether a client can *show* the popup depends on how it is started, not on the server. Hermes
+answers the popup in its TUI (`hermes --tui`); the plain CLI does not render it, and there the
+action parks for the web interface as usual.
+
 The terminal says which case it is, right after the handshake:
 
 ```
@@ -318,7 +322,7 @@ Because stdio belongs to the agent, the terminal is the only window into the run
 prints one line per call and one line per connecting client:
 
 ```
-  client connected: Hermes 0.4.1
+  client connected: Hermes 0.4.1 — popup supported
   ok   list_services (mcp) 693 ms
   ok   restart_service (mcp) 0 ms parked, waiting for approval
   err  stop_service (mcp) 858 ms
@@ -332,6 +336,11 @@ This is stderr, so it never interferes with the JSON-RPC frames on stdout.
 there as `mcp_winadmin_*`, and Hermes picks up changes to the tool list live — so the on/off
 switches take effect without restarting the agent. Only *enabled* tools appear, so on a fresh
 install Hermes sees the two governance tools until you switch things on.
+
+**Run `hermes --tui` for the approval popups.** In the TUI a gated tool asks for approval right in
+the chat and the result arrives in the same call. In the plain CLI Hermes does not render the
+elicitation, so the action parks and the web interface decides — the calls still work, they are
+just approved over there. Read-only triage is unaffected; it is the gated tools that need the TUI.
 
 ```yaml
 # ~/.hermes/config.yaml
