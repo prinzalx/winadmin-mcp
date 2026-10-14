@@ -1,5 +1,5 @@
 {
-  "name": "windows-admin-mcp",
+  "name": "winadmin-mcp",
   "version": "0.1.0",
   "description": "Windows administration MCP server with a web interface to switch tools on and off",
   "type": "module",
@@ -8,7 +8,7 @@
     "node": ">=20"
   },
   "bin": {
-    "windows-admin-mcp": "dist/index.js"
+    "winadmin-mcp": "dist/index.js"
   },
   "main": "dist/index.js",
   "files": [

@@ -96,7 +96,7 @@ try {
     capabilities: {},
     clientInfo: { name: "smoke-test", version: "0.0.0" },
   });
-  check("initialize answered", init.result?.serverInfo?.name === "windows-admin-mcp", init.result?.serverInfo?.name ?? "no name");
+  check("initialize answered", init.result?.serverInfo?.name === "winadmin-mcp", init.result?.serverInfo?.name ?? "no name");
 
   server.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
 

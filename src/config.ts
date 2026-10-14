@@ -61,8 +61,8 @@ function defaultConfigPath(): string {
   if (override) {
     return override;
   }
-  const base = process.env.APPDATA ?? join(homedir(), ".windows-admin-mcp");
-  return join(base, "windows-admin-mcp", "config.json");
+  const base = process.env.APPDATA ?? join(homedir(), ".winadmin-mcp");
+  return join(base, "winadmin-mcp", "config.json");
 }
 
 /**

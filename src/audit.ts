@@ -24,8 +24,8 @@ function defaultAuditPath(): string {
   if (override) {
     return override;
   }
-  const base = process.env.APPDATA ?? join(homedir(), ".windows-admin-mcp");
-  return join(base, "windows-admin-mcp", "audit.jsonl");
+  const base = process.env.APPDATA ?? join(homedir(), ".winadmin-mcp");
+  return join(base, "winadmin-mcp", "audit.jsonl");
 }
 
 /**

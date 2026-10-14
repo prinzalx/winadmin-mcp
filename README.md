@@ -90,7 +90,7 @@ A real call, a real machine:
 // tools/call: get_service { "name": "Spooler" }
 {
   "name": "Spooler",
-  "display_name": "Druckwarteschlange",
+  "display_name": "Print Queue",
   "status": "Running",
   "start_mode": "Auto",
   "log_on": "LocalSystem",
@@ -301,8 +301,8 @@ node dist/index.js --help
 |---|---|---|---|
 | `--port <n>` | `WAMD_PORT` | `8787` | port of the web interface |
 | `--no-web` | `WAMD_NO_WEB=1` | off | stdio only, do not bind an HTTP port |
-| `--config <path>` | `WAMD_CONFIG` | `%APPDATA%\windows-admin-mcp\config.json` | where the switches are stored |
-| | `WAMD_AUDIT` | `%APPDATA%\windows-admin-mcp\audit.jsonl` | append-only audit trail |
+| `--config <path>` | `WAMD_CONFIG` | `%APPDATA%\winadmin-mcp\config.json` | where the switches are stored |
+| | `WAMD_AUDIT` | `%APPDATA%\winadmin-mcp\audit.jsonl` | append-only audit trail |
 | `--help` | | | print the usage text and exit |
 
 The command line wins over the environment; both are optional. `--no-web` exists for setups where

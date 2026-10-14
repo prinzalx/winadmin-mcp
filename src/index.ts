@@ -84,7 +84,7 @@ type RegisteredToolRef = { enable(): void; disable(): void };
  */
 function buildMcpServer(): { server: McpServer; sync: () => void } {
   const server = new McpServer(
-    { name: "windows-admin-mcp", version: VERSION },
+    { name: "winadmin-mcp", version: VERSION },
     { instructions: "Windows administration tools. Any tool can be switched off in the web interface; destructive tools can be gated behind an approval." },
   );
 
