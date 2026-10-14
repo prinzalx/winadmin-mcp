@@ -1,7 +1,14 @@
 import { spawn } from "node:child_process";
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// A private config file, so the checks never touch the operator's switches.
+const CONFIG = join(tmpdir(), "winadmin-mcp-webcheck.json");
+rmSync(CONFIG, { force: true });
 
 // stdin must stay open: a closed stdin is how a stdio MCP client signals shutdown.
-const server = spawn(process.execPath, ["dist/index.js"], { stdio: ["pipe", "pipe", "inherit"], env: { ...process.env, WAMD_PORT: "8802" } });
+const server = spawn(process.execPath, ["dist/index.js"], { stdio: ["pipe", "pipe", "inherit"], env: { ...process.env, WAMD_PORT: "8802", WAMD_CONFIG: CONFIG } });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const post = (p, b) => fetch(`http://127.0.0.1:8802${p}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) }).then((r) => r.json());
 
@@ -23,8 +30,7 @@ console.log("pending after:", after.pending.length, "| audit entries:", after.au
 
 // The disabled/visible toggle round-trips through the config file.
 await fetch("http://127.0.0.1:8802/api/tools", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: { resolve_dns: false } }) });
-const afterToggle = await (await fetch("http://127.0.0.1:8802/api/state")).json();
-console.log("resolve_dns enabled after toggle:", afterToggle.tools.find((t) => t.name === "resolve_dns").enabled);
-
+console.log("resolve_dns visible after toggle off:", (await (await fetch("http://127.0.0.1:8802/api/state")).json()).tools.find((t) => t.name === "resolve_dns").enabled);
 server.kill();
 await new Promise((r) => server.once("close", r));
+rmSync(CONFIG, { force: true });

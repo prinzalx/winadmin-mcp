@@ -12,6 +12,9 @@ Plus a **web interface** (`http://127.0.0.1:8787`), in which **every tool can be
 off individually**. What is off disappears from `tools/list` at runtime — the agent simply no longer
 sees the function and cannot call it either.
 
+**Least privilege is the default:** on a fresh machine every tool starts *off*. An agent gets the
+governance tools and nothing else until you decide what it may do.
+
 **Contents** · [Quick Start](#quick-start) · [Why So Tightly Built](#why-so-tightly-built) ·
 [Tools](#tools) · [Approval Gate](#approval-gate-and-switches) · [Web UI](#the-web-ui) ·
 [Hermes](#hermes-agent) · [Configuration](#configuration) · [Development](#development)
@@ -27,6 +30,10 @@ node dist/index.js
 ```
 windows-admin-mcp web interface: http://127.0.0.1:8787
 ```
+
+Open the interface and switch on what the agent is allowed to touch — the section header carries a
+master switch for all tools at once, and each module group has its own pair. Until then
+`tools/list` returns only `list_pending` and `confirm_action`.
 
 **stdio** is the MCP transport; the same process starts the HTTP interface. Both transports share
 the same tool list, the same switches and the same audit trail — so the web UI can take tools away
@@ -210,7 +217,8 @@ latest on the next `tools/list`.
 
 [Hermes](https://github.com/NousResearch/hermes-agent) speaks MCP out of the box: our tools appear
 there as `mcp_winadmin_*`, and Hermes picks up changes to the tool list live — so the on/off
-switches take effect without restarting the agent.
+switches take effect without restarting the agent. Only *enabled* tools appear, so on a fresh
+install Hermes sees the two governance tools until you switch things on.
 
 ```yaml
 # ~/.hermes/config.yaml   (Windows: C:\Users\<user>\.hermes\config.yaml)
@@ -228,10 +236,12 @@ mcp_servers:
   what could be the cause?
 ```
 
-For this one sentence Hermes needs no special command, but four tools: `system_health` for uptime
-and the time of the last boot, `query_events` (`log: System`, `level: error`) for the window since
-the boot, `explain_event_id` for Kernel-Power 41, EventLog 6008 or Service Control Manager
-7000/7031/7034 — and `diagnose_service`, if a service was the trigger.
+For this one sentence Hermes needs no special command, but four tools, and those four have to be
+visible first: `system_health` for uptime and the time of the last boot, `query_events`
+(`log: System`, `level: error`) for the window since the boot, `explain_event_id` for Kernel-Power
+41, EventLog 6008 or Service Control Manager 7000/7031/7034 — and `diagnose_service`, if a service
+was the trigger. Switch on the *events* and *diagnostics* groups (or just those four rows) and the
+prompt works; everything else stays out of the model's way.
 
 For exactly this workflow, a sample skill ships at
 [`skills/windows-triage/SKILL.md`](skills/windows-triage/SKILL.md); it teaches Hermes the triage
@@ -261,20 +271,21 @@ node dist/index.js --help
 The command line wins over the environment; both are optional. `--no-web` exists for setups where
 only the MCP client should reach the machine — no HTTP port, no UI, one less listener.
 
-The web UI writes `config.json`; editing it by hand works just as well:
+The web UI writes `config.json` with one entry per tool; editing it by hand works just as well:
 
 ```jsonc
 {
-  "enabledTools": { "list_interfaces": false },
-  "requireApprovalTools": { "restart_service": true },
+  "enabledTools": { "query_events": true, "system_health": true },  // the rest: false
+  "requireApprovalTools": { "stop_service": true },                  // the rest: false
   "maxBulkItems": 20,
   "protectedProcesses": ["lsass", "csrss", "svchost", "winlogon", "smss", "services"]
 }
 ```
 
-Tools are active by default so the server works out of the box; something is only disabled once the
-file explicitly switches it off. The paths are deliberately absolute — a relative path would be
-resolved against the working directory of the MCP client, and that differs per client.
+Every tool starts disabled, so an entry missing from `enabledTools` means *off*. A config file that
+an older version wrote with everything on keeps everything on — the default only applies to entries
+that are not in the file yet. The paths are deliberately absolute; a relative path would be resolved
+against the working directory of the MCP client, and that differs per client.
 
 ### Audit Trail
 

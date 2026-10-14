@@ -7,12 +7,19 @@
  * from `tools/list` and makes the server announce a list change.
  */
 import { spawn } from "node:child_process";
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const PORT = 8799;
 
+// A private config file, so the test neither reads nor writes the operator's switches.
+const CONFIG = join(tmpdir(), "winadmin-mcp-smoke.json");
+rmSync(CONFIG, { force: true });
+
 const server = spawn(process.execPath, ["dist/index.js"], {
   stdio: ["pipe", "pipe", "inherit"],
-  env: { ...process.env, WAMD_PORT: String(PORT) },
+  env: { ...process.env, WAMD_PORT: String(PORT), WAMD_CONFIG: CONFIG },
 });
 
 let failed = 0;
@@ -95,12 +102,25 @@ try {
 
   const list1 = await request("tools/list");
   const names1 = (list1.result?.tools ?? []).map((t) => t.name);
-  check("tools/list returns every tool", names1.length >= 20, `${String(names1.length)} tools`);
-  check("confirm_action is advertised", names1.includes("confirm_action"));
-  check("list_pending is advertised", names1.includes("list_pending"));
+
+  // Least privilege: a fresh config exposes only the two governance tools.
+  check(
+    "fresh config hides every switchable tool",
+    names1.length === 2 && names1.includes("list_pending") && names1.includes("confirm_action"),
+    names1.join(", "),
+  );
+
+  const state1 = await (await fetch(`http://127.0.0.1:${String(PORT)}/api/state`)).json();
+  await patchTools({ enabled: Object.fromEntries(state1.tools.map((t) => [t.name, true])) });
+
+  const enabledTools = (await request("tools/list")).result?.tools ?? [];
+  const names = enabledTools.map((t) => t.name);
+  check("tools/list returns every tool", names.length >= 20, `${String(names.length)} tools`);
+  check("confirm_action is advertised", names.includes("confirm_action"));
+  check("list_pending is advertised", names.includes("list_pending"));
   check(
     "every advertised tool has an object schema",
-    (list1.result?.tools ?? []).every((t) => t.inputSchema?.type === "object"),
+    enabledTools.every((t) => t.inputSchema?.type === "object"),
   );
 
   const call = await request("tools/call", { name: "explain_event_id", arguments: { event_id: 6008 } });
@@ -166,6 +186,7 @@ try {
   const closed = new Promise((resolve) => server.once("close", resolve));
   server.stdin.end();
   await closed;
+  rmSync(CONFIG, { force: true });
 }
 
 console.log(failed === 0 ? "\nall checks passed" : `\n${String(failed)} check(s) failed`);

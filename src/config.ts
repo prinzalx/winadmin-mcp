@@ -66,14 +66,15 @@ function defaultConfigPath(): string {
 }
 
 /**
- * Tools are enabled by default so the server works out of the box. A tool is only hidden
- * once the config file (usually written by the web interface) explicitly disables it.
+ * Least privilege: every tool starts disabled and has to be switched on in the web interface.
+ * A fresh config file therefore means an MCP client sees only the governance tools until the
+ * operator opts in.
  */
 export function loadConfig(tools: ToolDefinition[]): ConfigStore {
   const path = defaultConfigPath();
 
   const settings: Settings = {
-    enabledTools: Object.fromEntries(tools.map((t) => [t.name, t.defaultEnabled ?? true])),
+    enabledTools: Object.fromEntries(tools.map((t) => [t.name, t.defaultEnabled ?? false])),
     requireApprovalTools: Object.fromEntries(
       tools.map((t) => [t.name, t.defaultRequiresApproval ?? false]),
     ),

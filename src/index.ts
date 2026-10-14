@@ -95,7 +95,7 @@ function buildMcpServer(): { server: McpServer; sync: () => void } {
       tool.name,
       { title: tool.title, description: tool.description, inputSchema: zodShape(tool) as never },
       ((args: Record<string, unknown>) => {
-        if (config.settings.enabledTools[tool.name] === false) {
+        if (!config.settings.enabledTools[tool.name]) {
           return fail(`${tool.name} is disabled in the web interface`);
         }
         return invoke(tool, args ?? {}, "mcp");
@@ -135,7 +135,7 @@ function buildMcpServer(): { server: McpServer; sync: () => void } {
 
   const sync = () => {
     for (const [name, ref] of refs) {
-      const enabled = config.settings.enabledTools[name] !== false;
+      const enabled = Boolean(config.settings.enabledTools[name]);
       if (enabled) ref.enable();
       else ref.disable();
     }
@@ -146,7 +146,7 @@ function buildMcpServer(): { server: McpServer; sync: () => void } {
 }
 
 function isEnabled(name: string): boolean {
-  return config.settings.enabledTools[name] !== false;
+  return Boolean(config.settings.enabledTools[name]);
 }
 
 // ---------------------------------------------------------------------------
