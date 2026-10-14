@@ -36,15 +36,92 @@
   main { display: grid; grid-template-columns: minmax(420px, 1.1fr) minmax(380px, 1fr); gap: 24px; padding: 24px; align-items: start; }
   @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
   h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
-  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 20px; }
-  .group { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    margin-bottom: 22px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px #0006;
+  }
+  /* The heading is a bar, so it stands out more than the section around it. */
+  section > h2 {
+    display: flex;
+    align-items: center;
+    margin: 0;
+    padding: 11px 16px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--fg);
+    background: #262c36;
+    border-bottom: 1px solid var(--line);
+  }
+  section > h2::before {
+    content: "";
+    display: inline-block;
+    width: 4px;
+    height: 13px;
+    margin-right: 9px;
+    vertical-align: -1px;
+    border-radius: 2px;
+    background: var(--accent);
+  }
+  section > .body { padding: 14px 16px 16px; }
+  /* Master switches: one per group, one for everything. */
+  .master {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+  }
+  .master input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+  .h2-actions { margin-left: auto; }
+  .group { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 12px; }
   .group:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
-  .group-name { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 6px; }
+  .group-name {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto;
+    gap: 12px;
+    align-items: center;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: var(--fg);
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+  .group-name .master { justify-self: center; font-weight: 400; }
   .tool { display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px; align-items: center; padding: 7px 0; }
   .tool .name { font-family: Consolas, monospace; font-size: 13px; }
   .tool .desc { color: var(--muted); font-size: 12px; }
-  .tool-head { padding: 0 0 4px; }
-  .tool-head .col { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); text-align: center; }
+  .tool-head { padding: 0 0 8px; }
+  .tool-head .col {
+    display: block;
+    font-size: 11px;
+    line-height: 1.25;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    font-weight: 700;
+    color: var(--fg);
+    text-align: center;
+  }
+  .tool-head .col small {
+    display: block;
+    margin-top: 2px;
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--muted);
+  }
   .badge { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; padding: 1px 6px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
   .badge.write { color: var(--amber); border-color: #4a3d1d; }
   .badge.off { color: var(--red); }
@@ -69,6 +146,8 @@
   .log .ok { color: var(--green); }
   .log .err { color: var(--red); }
   .hint { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  .legend { color: var(--muted); font-size: 12px; margin: 0 0 14px; }
+  .legend b { color: var(--fg); }
   a { color: var(--accent); }
   code { font-family: Consolas, monospace; font-size: 12px; }
 </style>
@@ -81,27 +160,40 @@
 <main>
   <div>
     <section>
-      <h2>Tools</h2>
-      <div class="hint" style="margin:0 0 12px">
-        <b>Enabled</b> controls whether the tool is visible to MCP clients at all.
-        <b>Approval</b> controls whether a call runs immediately or waits for you here (or via <code>confirm_action</code>).
+      <h2>Tools
+        <span class="h2-actions">
+          <label class="master" title="Turn every tool on or off in one go">
+            <input type="checkbox" id="all-enabled">all visible
+          </label>
+          <label class="master" title="Require approval for every tool, or for none">
+            <input type="checkbox" id="all-approval">all approval
+          </label>
+        </span>
+      </h2>
+      <div class="body">
+        <div class="legend">
+          <b>Visible</b> decides whether MCP clients see the tool at all. <b>Approval</b> decides
+          whether a call runs at once or parks here with a <code>confirmation_id</code>.
+        </div>
+        <div id="tools"></div>
       </div>
-      <div id="tools"></div>
     </section>
   </div>
   <div>
     <section>
       <h2>System</h2>
-      <div class="kv" id="health"></div>
-      <div class="hint" id="health-error"></div>
+      <div class="body">
+        <div class="kv" id="health"></div>
+        <div class="hint" id="health-error"></div>
+      </div>
     </section>
     <section>
       <h2>Awaiting approval</h2>
-      <div id="pending"></div>
+      <div class="body"><div id="pending"></div></div>
     </section>
     <section>
       <h2>Recent activity</h2>
-      <div id="audit"></div>
+      <div class="body"><div id="audit"></div></div>
     </section>
   </div>
 </main>
@@ -121,11 +213,21 @@ function renderTools(state) {
   document.getElementById("tools").innerHTML = `
     <div class="tool tool-head">
       <span></span><span></span>
-      <span class="col">visible</span>
-      <span class="col">approval</span>
-    </div>` + Object.entries(groups).map(([mod, tools]) => `
+      <span class="col" title="Off: hidden from tools/list, and a call anyway is rejected">visible<small>in tools/list</small></span>
+      <span class="col" title="On: the call parks until you run it here or call confirm_action">approval<small>waits for you</small></span>
+    </div>` + Object.entries(groups).map(([mod, tools]) => {
+    const on = (kind) => tools.filter((t) => t[kind]).length;
+    return `
     <div class="group">
-      <div class="group-name">${esc(mod)}</div>
+      <div class="group-name"><span>${esc(mod)}</span>
+        <span></span>
+        <label class="master" title="Toggle every tool in ${esc(mod)}">
+          <input type="checkbox" data-group="${esc(mod)}" data-kind="enabled" ${on("enabled") === tools.length ? "checked" : ""}>
+        </label>
+        <label class="master" title="Toggle approval for every tool in ${esc(mod)}">
+          <input type="checkbox" data-group="${esc(mod)}" data-kind="approval" ${on("requires_approval") === tools.length ? "checked" : ""}>
+        </label>
+      </div>
       ${tools.map((t) => `
         <div class="tool">
           <div>
@@ -133,15 +235,44 @@ function renderTools(state) {
             <div class="desc">${esc(t.description)}</div>
           </div>
           <span class="badge ${t.destructive ? "write" : ""}">${t.destructive ? "write" : "read"}</span>
-          <label title="visible to MCP clients">
+          <label title="visible to MCP clients — off means hidden from tools/list">
             <input type="checkbox" data-tool="${esc(t.name)}" data-kind="enabled" ${t.enabled ? "checked" : ""}>
           </label>
-          <label title="require approval before running">
+          <label title="require approval before running — the call parks until you confirm">
             <input type="checkbox" data-tool="${esc(t.name)}" data-kind="approval" ${t.requires_approval ? "checked" : ""} ${t.enabled ? "" : "disabled"}>
           </label>
         </div>`).join("")}
-    </div>`).join("");
+    </div>`;
+  }).join("");
+
+  syncMasters(state);
 }
+
+/** Third state for a master switch: some but not all members are on. */
+function syncMasters(state) {
+  for (const el of document.querySelectorAll("#tools input[data-group]")) {
+    const list = state.tools.filter((t) => t.module === el.dataset.group);
+    const key = el.dataset.kind === "enabled" ? "enabled" : "requires_approval";
+    const on = list.filter((t) => t[key]).length;
+    el.indeterminate = on > 0 && on < list.length;
+  }
+
+  const totals = [
+    ["all-enabled", "enabled"],
+    ["all-approval", "requires_approval"],
+  ];
+  for (const [id, key] of totals) {
+    const el = document.getElementById(id);
+    const on = state.tools.filter((t) => t[key]).length;
+    el.checked = on === state.tools.length;
+    el.indeterminate = on > 0 && on < state.tools.length;
+  }
+}
+
+/** `{ requireApproval: { a: true, b: true } }` for a list of tools. */
+const masterPayload = (list, kind, value) => ({
+  [kind === "enabled" ? "enabled" : "requireApproval"]: Object.fromEntries(list.map((t) => [t.name, value])),
+});
 
 function renderPending(items, resolve) {
   const el = document.getElementById("pending");
@@ -211,10 +342,34 @@ async function patch(body) {
 
 document.getElementById("tools").addEventListener("change", (e) => {
   const input = e.target;
-  if (!input.dataset?.tool) return;
+  if (!input.dataset) return;
+
+  // A group header switch: apply to every tool of that module.
+  if (input.dataset.group) {
+    const list = snapshot.tools.filter((t) => t.module === input.dataset.group);
+    if (input.dataset.kind === "approval") {
+      awaitlessPatch(masterPayload(list, "approval", input.checked));
+    } else {
+      awaitlessPatch(masterPayload(list, "enabled", input.checked));
+    }
+    return;
+  }
+
+  if (!input.dataset.tool) return;
   if (input.dataset.kind === "enabled") patch({ enabled: { [input.dataset.tool]: input.checked } });
   else patch({ requireApproval: { [input.dataset.tool]: input.checked } });
 });
+
+for (const [id, kind] of [["all-enabled", "enabled"], ["all-approval", "approval"]]) {
+  document.getElementById(id).addEventListener("change", (e) => {
+    awaitlessPatch(masterPayload(snapshot.tools, kind, e.target.checked));
+  });
+}
+
+/** A master switch re-renders the whole list, so it must not block on the round trip. */
+function awaitlessPatch(body) {
+  patch(body).catch((err) => { document.getElementById("meta").textContent = String(err); });
+}
 
 document.getElementById("pending").addEventListener("click", async (e) => {
   const btn = e.target.closest?.("button[data-resolve]");
