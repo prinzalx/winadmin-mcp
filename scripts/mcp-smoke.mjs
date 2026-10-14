@@ -111,6 +111,16 @@ try {
   const bad = await request("tools/call", { name: "explain_event_id", arguments: {} });
   check("missing required input is rejected", bad.result?.isError === true);
 
+  // ping_host must reach the cmdlet, not die on a parameter name: PowerShell 5.1 knows
+  // -ComputerName but not the -TargetName of PowerShell 7. "unreachable" would be a valid answer.
+  const ping = await request("tools/call", { name: "ping_host", arguments: { host: "127.0.0.1", count: 2 } });
+  const pingText = ping.result?.content?.[0]?.text ?? "";
+  check(
+    "ping_host reaches the cmdlet",
+    ping.result?.isError !== true && !pingText.includes("failed"),
+    pingText.slice(0, 48),
+  );
+
   // The gate: an approval-required tool must park the action instead of executing it.
   await patchTools({ requireApproval: { restart_service: true } });
   const gated = await request("tools/call", { name: "restart_service", arguments: { name: "WSearch" } });

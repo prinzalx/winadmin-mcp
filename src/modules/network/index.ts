@@ -30,9 +30,9 @@ export const networkTools: ToolDefinition[] = [
       }
 
       const res = await runPowerShell<string>(
-        `$p = Test-Connection -TargetName ${psQuote(host)} -Count ${String(args.count ?? 4)} -Quiet; ` +
+        `$p = Test-Connection -ComputerName ${psQuote(host)} -Count ${String(args.count ?? 4)} -Quiet; ` +
           `if (-not $p) { Write-Output 'unreachable'; exit }; ` +
-          `$r = Test-Connection -TargetName ${psQuote(host)} -Count ${String(args.count ?? 4)} | ` +
+          `$r = Test-Connection -ComputerName ${psQuote(host)} -Count ${String(args.count ?? 4)} | ` +
           "Measure-Object -Property ResponseTime -Average; " +
           "ConvertTo-Json -Compress -InputObject @{reachable=$true; avg_ms=[math]::Round($r.Average,1)}",
         { json: false, timeoutMs: 30_000 },
