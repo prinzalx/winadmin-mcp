@@ -21,19 +21,55 @@ governance tools and nothing else until you decide what it may do.
 
 ## Quick Start
 
+You need **Node.js 20 or newer** (`node --version` to check). Then three steps, all inside one
+folder:
+
+**1. Get the files.** Either clone the repository:
+
+```bash
+git clone https://github.com/prinzalx/winadmin-mcp.git
+cd winadmin-mcp
+```
+
+Or, without Git: on the GitHub page click **Code → Download ZIP**, unpack the archive, and open the
+resulting folder. Everything has to stay in that one folder — `src/`, `package.json`, the config and
+the build output belong together.
+
+**2. Install and build** (this creates `dist/` from the TypeScript sources):
+
 ```bash
 npm ci
 npm run build
+```
+
+**3. Start the server:**
+
+```bash
 node dist/index.js
 ```
 
+The terminal answers with a banner and two lines about where the server lives:
+
 ```
-windows-admin-mcp web interface: http://127.0.0.1:8787
+██╗    ██╗██╗███╗   ██╗ █████╗ ██████╗ ███╗   ███╗██╗███╗   ██╗  ███╗   ███╗ ██████╗██████╗
+██║    ██║██║████╗  ██║██╔══██╗██╔══██╗████╗ ████║██║████╗  ██║  ████╗ ████║██╔═════██╔══██╗
+██║ █╗ ██║██║██╔██╗ ██║███████║██║  ██║██╔████╔██║██║██╔██╗ ██║  ██╔████╔██║██║     ██████╔╝
+██║███╗██║██║██║╚██╗██║██╔══██║██║  ██║██║╚██╔╝██║██║██║╚██╗██║  ██║╚██╔╝██║██║     ██╔═══╝
+╚███╔███╔╝██║██║ ╚████║██║  ██║██████╔╝██║ ╚═╝ ██║██║██║ ╚████║  ██║ ╚═╝ ██║╚██████╗██║
+ ╚══╝╚══╝ ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═════╝ ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝  ╚═╝     ╚═╝ ╚═════╝╚═╝
+
+  web interface   http://127.0.0.1:8787
+  MCP transport   stdio — this terminal stays attached to the agent
 ```
 
-Open the interface and switch on what the agent is allowed to touch — the section header carries a
-master switch for all tools at once, and each module group has its own pair. Until then
-`tools/list` returns only `list_pending` and `confirm_action`.
+To be clear about what those lines are: **they are output, not arguments**. You do not pass the URL
+anywhere; the server announces it, and you *surf to it in a browser*. The second line says the same
+about the terminal — it is the MCP channel, so the command does not return and the window must stay
+open.
+
+In the browser, open that address and switch on what the agent is allowed to touch — the section
+header carries a master switch for all tools at once, and each module group has its own pair. Until
+then `tools/list` returns only `list_pending` and `confirm_action`.
 
 **stdio** is the MCP transport; the same process starts the HTTP interface. Both transports share
 the same tool list, the same switches and the same audit trail — so the web UI can take tools away

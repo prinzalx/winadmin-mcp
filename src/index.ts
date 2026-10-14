@@ -249,6 +249,15 @@ function serveHtml(res: ServerResponse): void {
   res.end(readFileSync(fileURLToPath(new URL("./webui.html", import.meta.url)), "utf8"));
 }
 
+const BANNER = String.raw`
+██╗    ██╗██╗███╗   ██╗ █████╗ ██████╗ ███╗   ███╗██╗███╗   ██╗  ███╗   ███╗ ██████╗██████╗
+██║    ██║██║████╗  ██║██╔══██╗██╔══██╗████╗ ████║██║████╗  ██║  ████╗ ████║██╔═════██╔══██╗
+██║ █╗ ██║██║██╔██╗ ██║███████║██║  ██║██╔████╔██║██║██╔██╗ ██║  ██╔████╔██║██║     ██████╔╝
+██║███╗██║██║██║╚██╗██║██╔══██║██║  ██║██║╚██╔╝██║██║██║╚██╗██║  ██║╚██╔╝██║██║     ██╔═══╝
+╚███╔███╔╝██║██║ ╚████║██║  ██║██████╔╝██║ ╚═╝ ██║██║██║ ╚████║  ██║ ╚═╝ ██║╚██████╗██║
+ ╚══╝╚══╝ ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═════╝ ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝  ╚═╝     ╚═╝ ╚═════╝╚═╝
+`;
+
 const HELP = `winadmin-mcp — Windows administration MCP server
 
 usage: node dist/index.js [options]
@@ -299,12 +308,15 @@ async function main(): Promise<void> {
     }
   });
 
+  process.stderr.write(`\n${BANNER}\n`);
+
   if (webDisabled) {
-    process.stderr.write("windows-admin-mcp: web interface disabled\n");
+    process.stderr.write("  web interface disabled (--no-web)\n");
   } else {
     await new Promise<void>((resolve) => http.listen(port, resolve));
-    process.stderr.write(`windows-admin-mcp web interface: http://127.0.0.1:${String(port)}\n`);
+    process.stderr.write(`  web interface   http://127.0.0.1:${String(port)}\n`);
   }
+  process.stderr.write("  MCP transport   stdio — this terminal stays attached to the agent\n\n");
 
   // stdio is the MCP transport; the web interface keeps running in the same process.
   const { server, sync } = buildMcpServer();
