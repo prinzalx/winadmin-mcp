@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -28,13 +28,32 @@ function defaultAuditPath(): string {
   return join(base, "winadmin-mcp", "audit.jsonl");
 }
 
+/** Reads the last lines of an existing audit file, so the web UI survives a server restart. */
+function loadTail(path: string, limit = 200): AuditRecord[] {
+  try {
+    if (!existsSync(path)) {
+      return [];
+    }
+    return readFileSync(path, "utf8")
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .slice(-limit)
+      .map((line) => JSON.parse(line) as AuditRecord);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Append-only JSONL audit trail. The path is absolute on purpose: a relative path would
  * resolve against the MCP client's working directory, which differs per client.
  */
 export function createAuditLog(): AuditLog {
   const path = defaultAuditPath();
-  let buffer: AuditRecord[] = [];
+  let buffer: AuditRecord[] = loadTail(path);
+  if (buffer.length > 200) {
+    buffer = buffer.slice(-200);
+  }
 
   return {
     path,

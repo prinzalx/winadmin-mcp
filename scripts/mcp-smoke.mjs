@@ -13,13 +13,15 @@ import { join } from "node:path";
 
 const PORT = 8799;
 
-// A private config file, so the test neither reads nor writes the operator's switches.
+// A private config and audit file, so the test neither reads nor writes the operator's files.
 const CONFIG = join(tmpdir(), "winadmin-mcp-smoke.json");
+const AUDIT = join(tmpdir(), "winadmin-mcp-smoke.audit.jsonl");
 rmSync(CONFIG, { force: true });
+rmSync(AUDIT, { force: true });
 
 const server = spawn(process.execPath, ["dist/index.js"], {
   stdio: ["pipe", "pipe", "inherit"],
-  env: { ...process.env, WAMD_PORT: String(PORT), WAMD_CONFIG: CONFIG },
+  env: { ...process.env, WAMD_PORT: String(PORT), WAMD_CONFIG: CONFIG, WAMD_AUDIT: AUDIT },
 });
 
 let failed = 0;
@@ -165,6 +167,16 @@ try {
   const unknown = await request("tools/call", { name: "confirm_action", arguments: { confirmation_id: "nope" } });
   check("unknown confirmation_id is rejected", unknown.result?.isError === true);
 
+  // The gate must work for a read-only tool too — approval is a switch, not a property of the tool.
+  await patchTools({ requireApproval: { list_services: true } });
+  const gatedRead = await request("tools/call", { name: "list_services", arguments: {} });
+  const gatedReadText = gatedRead.result?.content?.[0]?.text ?? "";
+  check("approval gates a read-only tool as well", gatedReadText.includes("gated behind an approval"), gatedReadText.slice(0, 48));
+  await patchTools({ requireApproval: { list_services: false } });
+
+  const readNow = await request("tools/call", { name: "list_services", arguments: {} });
+  check("the same tool runs once approval is off", readNow.result?.isError !== true);
+
   // Enable switches: a disabled tool must vanish from tools/list.
   await patchTools({ enabled: { list_interfaces: false } });
   await waitFor((msg) => msg.method === "notifications/tools/list_changed", 5_000).catch(() => undefined);
@@ -187,6 +199,7 @@ try {
   server.stdin.end();
   await closed;
   rmSync(CONFIG, { force: true });
+  rmSync(AUDIT, { force: true });
 }
 
 console.log(failed === 0 ? "\nall checks passed" : `\n${String(failed)} check(s) failed`);

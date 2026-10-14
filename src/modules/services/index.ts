@@ -1,8 +1,7 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import type { ToolContext, ToolDefinition } from "../../types.js";
-import { gate } from "../../utils/gate.js";
+import type { ToolDefinition } from "../../types.js";
 import { asArray, psQuote, runPowerShell } from "../../utils/powershell.js";
 import { fail, ok, text } from "../../utils/result.js";
 
@@ -185,8 +184,7 @@ export const serviceTools: ToolDefinition[] = [
       confirmation_id: confirmationField,
     }),
     destructive: true,
-    handler: (args, ctx) =>
-      gate("start_service", args, ctx, () => controlService("Start", String(args.name))),
+    handler: (args) => controlService("Start", String(args.name)),
   },
   {
     name: "stop_service",
@@ -198,8 +196,7 @@ export const serviceTools: ToolDefinition[] = [
       confirmation_id: confirmationField,
     }),
     destructive: true,
-    handler: (args, ctx) =>
-      gate("stop_service", args, ctx, () => controlService("Stop", String(args.name))),
+    handler: (args) => controlService("Stop", String(args.name)),
   },
   {
     name: "restart_service",
@@ -211,18 +208,17 @@ export const serviceTools: ToolDefinition[] = [
       confirmation_id: confirmationField,
     }),
     destructive: true,
-    handler: (args, ctx) =>
-      gate("restart_service", args, ctx, async () => {
-        const name = String(args.name);
-        const res = await runPowerShell<string>(
-          `Restart-Service -Name ${psQuote(name)}; Get-Service -Name ${psQuote(name)} | ` +
-            "ConvertTo-Json -Compress",
-          { json: false, timeoutMs: 90_000 },
-        );
-        return res.ok
-          ? text(`${name} restarted`, { name, status: /"Status"\s*:\s*"([^"]+)"/.exec(res.stdout)?.[1] ?? "unknown" })
-          : fail(`Restart-Service failed: ${res.error ?? "unknown error"}`);
-      }),
+    handler: async (args) => {
+      const name = String(args.name);
+      const res = await runPowerShell<string>(
+        `Restart-Service -Name ${psQuote(name)}; Get-Service -Name ${psQuote(name)} | ` +
+          "ConvertTo-Json -Compress",
+        { json: false, timeoutMs: 90_000 },
+      );
+      return res.ok
+        ? text(`${name} restarted`, { name, status: /"Status"\s*:\s*"([^"]+)"/.exec(res.stdout)?.[1] ?? "unknown" })
+        : fail(`Restart-Service failed: ${res.error ?? "unknown error"}`);
+    },
   },
   {
     name: "set_service_startmode",
@@ -235,18 +231,17 @@ export const serviceTools: ToolDefinition[] = [
       confirmation_id: confirmationField,
     }),
     destructive: true,
-    handler: (args, ctx: ToolContext) =>
-      gate("set_service_startmode", args, ctx, async () => {
-        const name = String(args.name);
-        const mode = args.startmode as StartMode;
-        const res = await runPowerShell<string>(
-          `Set-Service -Name ${psQuote(name)} -StartupType ${psQuote(apiStartMode(mode))}; ` +
-            `Get-Service -Name ${psQuote(name)} | Select-Object Name, StartType | ConvertTo-Json -Compress`,
-          { json: false },
-        );
-        return res.ok
-          ? text(`${name} start mode set to ${mode}`, res.stdout.trim())
-          : fail(`Set-Service failed: ${res.error ?? "unknown error"}`);
-      }),
+    handler: async (args) => {
+      const name = String(args.name);
+      const mode = args.startmode as StartMode;
+      const res = await runPowerShell<string>(
+        `Set-Service -Name ${psQuote(name)} -StartupType ${psQuote(apiStartMode(mode))}; ` +
+          `Get-Service -Name ${psQuote(name)} | Select-Object Name, StartType | ConvertTo-Json -Compress`,
+        { json: false },
+      );
+      return res.ok
+        ? text(`${name} start mode set to ${mode}`, res.stdout.trim())
+        : fail(`Set-Service failed: ${res.error ?? "unknown error"}`);
+    },
   },
 ];

@@ -12,7 +12,7 @@ import { ARGS, loadConfig } from "./config.js";
 import { ALL_TOOLS, TOOLS_BY_NAME } from "./modules/index.js";
 import { createSafety } from "./safety.js";
 import type { ToolContext, ToolDefinition } from "./types.js";
-import { fail, text } from "./utils/result.js";
+import { fail, pending, text } from "./utils/result.js";
 
 const VERSION = "0.1.0";
 
@@ -27,7 +27,19 @@ function zodShape(tool: ToolDefinition): Record<string, unknown> {
   return (tool.input as unknown as { shape?: Record<string, unknown> }).shape ?? {};
 }
 
-/** Runs a tool with validation and auditing. Throws only on unexpected handler bugs. */
+/** One compact line per call: what ran, from where, how long it took. */
+function traceCall(tool: string, source: string, okFlag: boolean, ms: number, note?: string): void {
+  const mark = okFlag ? "ok" : "err";
+  process.stderr.write(`  ${mark.padEnd(4)} ${tool} (${source}) ${String(ms)} ms${note ? ` ${note}` : ""}\n`);
+}
+
+/**
+ * Runs a tool with validation, the approval gate and auditing. Throws only on unexpected
+ * handler bugs.
+ *
+ * The gate is central on purpose: *every* tool — not only a destructive one — parks when its
+ * approval switch is on, so a switch flipped in the web UI always has an effect.
+ */
 async function invoke(tool: ToolDefinition, args: Record<string, unknown>, source: string): Promise<ToolResult> {
   const started = Date.now();
 
@@ -35,26 +47,43 @@ async function invoke(tool: ToolDefinition, args: Record<string, unknown>, sourc
   if (!parsed.success) {
     const message = parsed.error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; ");
     audit.write({ tool: tool.name, args, ok: false, durationMs: Date.now() - started, source, error: message });
+    traceCall(tool.name, source, false, Date.now() - started, "invalid input");
     return fail(`Invalid input for ${tool.name} — ${message}`);
   }
 
   try {
-    const result = await tool.handler(parsed.data as Record<string, unknown>, ctx);
-    audit.write({
-      tool: tool.name,
-      args,
-      ok: result.isError !== true,
-      durationMs: Date.now() - started,
-      source,
-      error:
-        result.isError === true
-          ? String((result.content[0] as { text?: string } | undefined)?.text ?? "tool error")
-          : undefined,
-    });
+    let result: ToolResult;
+    const confirmationId = (args ?? {}).confirmation_id;
+
+    if (typeof confirmationId === "string") {
+      // The confirmation consumes the parked action; a second path with the same id must fail.
+      if (!safety.take(confirmationId)) {
+        const message = `Unknown or expired confirmation_id "${confirmationId}"`;
+        audit.write({ tool: tool.name, args, ok: false, durationMs: Date.now() - started, source, error: message });
+        traceCall(tool.name, source, false, Date.now() - started, message);
+        return fail(message);
+      }
+      result = await tool.handler(parsed.data as Record<string, unknown>, ctx);
+    } else if (safety.needsApproval(tool.name)) {
+      const action = safety.create(tool.name, args ?? {}, source);
+      result = pending(action);
+    } else {
+      result = await tool.handler(parsed.data as Record<string, unknown>, ctx);
+    }
+
+    const ms = Date.now() - started;
+    const failed = result.isError === true;
+    const errorText = failed
+      ? String((result.content[0] as { text?: string } | undefined)?.text ?? "tool error")
+      : undefined;
+
+    audit.write({ tool: tool.name, args, ok: !failed, durationMs: ms, source, error: errorText });
+    traceCall(tool.name, source, !failed, ms, result.structuredContent && "confirmationId" in result.structuredContent ? "parked, waiting for approval" : undefined);
     return result;
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
     audit.write({ tool: tool.name, args, ok: false, durationMs: Date.now() - started, source, error: message });
+    traceCall(tool.name, source, false, Date.now() - started, message);
     return fail(`${tool.name} threw: ${message}`);
   }
 }
@@ -76,13 +105,13 @@ async function confirmById(id: string, source: string): Promise<ToolResult> {
   return invoke(tool, { ...pending.args, confirmation_id: id }, source);
 }
 
-type RegisteredToolRef = { enable(): void; disable(): void };
+type RegisteredToolRef = { enabled: boolean };
 
 /**
  * Builds a fresh MCP server with every tool registered, plus the meta tools. The returned
  * sync function mirrors the current enable switches onto the live tool list.
  */
-function buildMcpServer(): { server: McpServer; sync: () => void } {
+function buildMcpServer(): { server: McpServer; sync: (notify?: boolean) => void } {
   const server = new McpServer(
     { name: "winadmin-mcp", version: VERSION },
     { instructions: "Windows administration tools. Any tool can be switched off in the web interface; destructive tools can be gated behind an approval." },
@@ -133,12 +162,15 @@ function buildMcpServer(): { server: McpServer; sync: () => void } {
     },
   );
 
-  const sync = () => {
+  // Writing `enabled` directly changes the list without a notification per tool; the single
+  // `list_changed` for a whole config commit is sent separately. One PATCH must not print 22
+  // notifications in the terminal.
+  const sync = (notify = false) => {
     for (const [name, ref] of refs) {
-      const enabled = Boolean(config.settings.enabledTools[name]);
-      if (enabled) ref.enable();
-      else ref.disable();
+      ref.enabled = Boolean(config.settings.enabledTools[name]);
     }
+    // Without a connected client the SDK would throw on `notification()`.
+    if (notify && server.isConnected()) void server.server.sendToolListChanged();
   };
   sync();
 
@@ -320,7 +352,14 @@ async function main(): Promise<void> {
 
   // stdio is the MCP transport; the web interface keeps running in the same process.
   const { server, sync } = buildMcpServer();
-  config.onChange(sync);
+
+  // Without this the terminal gives no hint that a client connected at all.
+  server.server.oninitialized = () => {
+    const client = server.server.getClientVersion();
+    process.stderr.write(`  client connected: ${client?.name ?? "unknown"} ${client?.version ?? ""}\n`);
+  };
+  // A committed change (one PATCH, however many switches it touched) is exactly one notification.
+  config.onChange(() => sync(true));
   const stdio = new StdioServerTransport();
   await server.connect(stdio);
 

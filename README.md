@@ -200,10 +200,11 @@ Parked actions appear in the web UI and are decided there with **Run** or **Drop
 shows them to the agent, `confirm_action` executes one by ID. Parked actions expire after
 10 minutes.
 
-The approval switch is deliberately **generic**: it applies to every tool the UI marks as *write*
-(`start_service`, `stop_service`, `restart_service`, `set_service_startmode`, `kill_process`), but
-can be turned on for **any** tool — including read access, if you want to control when the agent is
-allowed to start PowerShell at all.
+The gate is enforced in one central place, before any tool handler runs, so it applies to **every**
+tool: a read-only call such as `list_services` parks just like `stop_service` when its approval
+switch is on. The read/write badge only describes what the tool does — it does not decide whether
+the gate can be used. An agent that receives a `confirmation_id` gets no data yet; it has to wait
+for the confirmation or call it again.
 
 ## The Web UI
 
@@ -215,6 +216,11 @@ The UI is a single file (`src/webui.html`, vanilla JS, no build step) with four 
 | **System** | the last `system_health` output — uptime, CPU, memory, drives, error count |
 | **Awaiting approval** | the parked actions with tool, arguments and the **Run** / **Drop** buttons |
 | **Recent activity** | the most recent audit entries: time, tool, success, duration, source |
+
+The page polls `/api/state` every two seconds and re-renders only when something actually changed,
+so a tool call from the agent or a freshly parked action shows up without a manual reload. The
+audit list is also read back from the audit file at startup, which means the history survives a
+server restart.
 
 ### HTTP Endpoints
 
@@ -246,8 +252,23 @@ applies to all its members, including tools that are currently hidden; the per-r
 being greyed out only concerns that row.
 
 Every switch change is persisted and reported to the MCP client via
-`notifications/tools/list_changed`. A client that ignores the notification sees the change at the
-latest on the next `tools/list`.
+`notifications/tools/list_changed` — exactly **one** notification per change, never one per tool,
+which would flood the terminal of anyone watching stdio. A client that ignores the notification
+sees the change at the latest on the next `tools/list`.
+
+### What the Terminal Shows
+
+Because stdio belongs to the agent, the terminal is the only window into the running server. It
+prints one line per call and one line per connecting client:
+
+```
+  client connected: Hermes 0.4.1
+  ok   list_services (mcp) 693 ms
+  ok   restart_service (mcp) 0 ms parked, waiting for approval
+  err  stop_service (mcp) 858 ms
+```
+
+This is stderr, so it never interferes with the JSON-RPC frames on stdout.
 
 ## Hermes Agent
 
@@ -346,9 +367,9 @@ npm test           # smoke test: real server, real PowerShell
 ```
 
 `npm test` runs [`scripts/mcp-smoke.mjs`](scripts/mcp-smoke.mjs): the script spawns the server on a
-free port, performs a real MCP handshake and checks 16 points — tool list, schema shape,
-validation, a real `ping_host` call, approval parking, `list_pending`, `confirm_action`, unknown
-confirmation ID, and enable/disable including
+free port, performs a real MCP handshake and checks 19 points — tool list, schema shape,
+validation, a real `ping_host` call, approval parking (for a write tool and for a read-only one),
+`list_pending`, `confirm_action`, unknown confirmation ID, and enable/disable including
 `list_changed`. Against real PowerShell/CIM output, not against a mock: a cmdlet parameter that does
 not exist in PowerShell 5.1 shows up here and not in front of the agent.
 

@@ -2,7 +2,6 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import type { ToolContext, ToolDefinition } from "../../types.js";
-import { gate } from "../../utils/gate.js";
 import { asArray, psQuote, runPowerShell } from "../../utils/powershell.js";
 import { fail, ok, text } from "../../utils/result.js";
 
@@ -157,26 +156,25 @@ export const processTools: ToolDefinition[] = [
       confirmation_id: z.string().optional().describe("Set only when confirming a pending action"),
     }),
     destructive: true,
-    handler: (args, ctx: ToolContext) =>
-      gate("kill_process", args, ctx, async () => {
-        const name = String(args.name);
-        const invalid = assertProcessName(name.replace(/\.exe$/i, ""));
-        if (invalid) {
-          return fail(invalid);
-        }
-        if (ctx.safety.isProtectedProcess(name)) {
-          return fail(`${name} is a protected system process and will not be killed`);
-        }
+    handler: async (args, ctx: ToolContext) => {
+      const name = String(args.name);
+      const invalid = assertProcessName(name.replace(/\.exe$/i, ""));
+      if (invalid) {
+        return fail(invalid);
+      }
+      if (ctx.safety.isProtectedProcess(name)) {
+        return fail(`${name} is a protected system process and will not be killed`);
+      }
 
-        const res = await runPowerShell<string>(
-          `Stop-Process -Name ${psQuote(name.replace(/\.exe$/i, ""))} -Force -PassThru | ` +
-            "Select-Object Id, Name | ConvertTo-Json -Compress",
-          { json: false },
-        );
-        return res.ok
-          ? text(`Killed ${name}`, res.stdout.trim())
-          : fail(`Stop-Process failed: ${res.error ?? "unknown error"}`);
-      }),
+      const res = await runPowerShell<string>(
+        `Stop-Process -Name ${psQuote(name.replace(/\.exe$/i, ""))} -Force -PassThru | ` +
+          "Select-Object Id, Name | ConvertTo-Json -Compress",
+        { json: false },
+      );
+      return res.ok
+        ? text(`Killed ${name}`, res.stdout.trim())
+        : fail(`Stop-Process failed: ${res.error ?? "unknown error"}`);
+    },
   },
   {
     name: "check_ports",

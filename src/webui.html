@@ -321,23 +321,42 @@ function renderAudit(items) {
 
 let snapshot;
 
-async function refresh() {
+let signature = "";
+
+async function refresh(force = false) {
   snapshot = await api("/api/state");
   document.getElementById("meta").textContent =
     `${snapshot.tools.filter((t) => t.enabled).length} of ${snapshot.tools.length} tools enabled · config ${snapshot.config_path}`;
+
+  // Rendering on every poll would rebuild the DOM constantly, so compare what is visible.
+  const next = JSON.stringify([
+    snapshot.tools.map((t) => [t.name, t.enabled, t.requires_approval]),
+    snapshot.pending.map((p) => p.id),
+    snapshot.audit.slice(0, 25).map((r) => [r.ts, r.tool, r.ok]),
+    snapshot.health,
+  ]);
+  if (!force && next === signature) return;
+  signature = next;
+
   renderTools(snapshot);
   renderPending(snapshot.pending);
   renderAudit(snapshot.audit);
   renderHealth(snapshot.health);
 }
 
+/** An agent can park an action or call a tool at any moment, so the page keeps itself current. */
+setInterval(() => {
+  if (!document.hidden) refresh().catch(() => undefined);
+}, 2000);
+
+/** After our own write the server is authoritative, so render unconditionally. */
 async function patch(body) {
   await api("/api/tools", {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  await refresh();
+  await refresh(true);
 }
 
 document.getElementById("tools").addEventListener("change", (e) => {

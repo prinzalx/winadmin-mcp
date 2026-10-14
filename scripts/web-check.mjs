@@ -3,12 +3,14 @@ import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// A private config file, so the checks never touch the operator's switches.
+// A private config and audit file, so the checks never touch the operator's files.
 const CONFIG = join(tmpdir(), "winadmin-mcp-webcheck.json");
+const AUDIT = join(tmpdir(), "winadmin-mcp-webcheck.audit.jsonl");
 rmSync(CONFIG, { force: true });
+rmSync(AUDIT, { force: true });
 
 // stdin must stay open: a closed stdin is how a stdio MCP client signals shutdown.
-const server = spawn(process.execPath, ["dist/index.js"], { stdio: ["pipe", "pipe", "inherit"], env: { ...process.env, WAMD_PORT: "8802", WAMD_CONFIG: CONFIG } });
+const server = spawn(process.execPath, ["dist/index.js"], { stdio: ["pipe", "pipe", "inherit"], env: { ...process.env, WAMD_PORT: "8802", WAMD_CONFIG: CONFIG, WAMD_AUDIT: AUDIT } });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const post = (p, b) => fetch(`http://127.0.0.1:8802${p}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) }).then((r) => r.json());
 
@@ -34,3 +36,4 @@ console.log("resolve_dns visible after toggle off:", (await (await fetch("http:/
 server.kill();
 await new Promise((r) => server.once("close", r));
 rmSync(CONFIG, { force: true });
+rmSync(AUDIT, { force: true });
