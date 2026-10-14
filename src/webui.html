@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Windows Admin MCP</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #14161a;
+    --panel: #1c1f25;
+    --line: #2b3038;
+    --fg: #e6e8eb;
+    --muted: #98a1ad;
+    --accent: #4da3ff;
+    --green: #4ec970;
+    --amber: #e0b341;
+    --red: #e06c60;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  main { display: grid; grid-template-columns: minmax(420px, 1.1fr) minmax(380px, 1fr); gap: 24px; padding: 24px; align-items: start; }
+  @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 20px; }
+  .group { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }
+  .group:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+  .group-name { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 6px; }
+  .tool { display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px; align-items: center; padding: 7px 0; }
+  .tool .name { font-family: Consolas, monospace; font-size: 13px; }
+  .tool .desc { color: var(--muted); font-size: 12px; }
+  .tool-head { padding: 0 0 4px; }
+  .tool-head .col { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); text-align: center; }
+  .badge { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; padding: 1px 6px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
+  .badge.write { color: var(--amber); border-color: #4a3d1d; }
+  .badge.off { color: var(--red); }
+  input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--accent); cursor: pointer; }
+  input[type=checkbox]:disabled { opacity: .35; cursor: not-allowed; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  td, th { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; }
+  .kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+  .kv div { background: #16181d; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  .kv span { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  .kv b { font-size: 16px; font-weight: 600; }
+  .pending { border-left: 3px solid var(--amber); }
+  .actions button { margin-right: 6px; }
+  button {
+    background: #262b33; color: var(--fg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.danger:hover { border-color: var(--red); }
+  .log td { font-family: Consolas, monospace; font-size: 11px; }
+  .log .ok { color: var(--green); }
+  .log .err { color: var(--red); }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  a { color: var(--accent); }
+  code { font-family: Consolas, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Windows Admin MCP</h1>
+  <div class="meta" id="meta">loading…</div>
+</header>
+<main>
+  <div>
+    <section>
+      <h2>Tools</h2>
+      <div class="hint" style="margin:0 0 12px">
+        <b>Enabled</b> controls whether the tool is visible to MCP clients at all.
+        <b>Approval</b> controls whether a call runs immediately or waits for you here (or via <code>confirm_action</code>).
+      </div>
+      <div id="tools"></div>
+    </section>
+  </div>
+  <div>
+    <section>
+      <h2>System</h2>
+      <div class="kv" id="health"></div>
+      <div class="hint" id="health-error"></div>
+    </section>
+    <section>
+      <h2>Awaiting approval</h2>
+      <div id="pending"></div>
+    </section>
+    <section>
+      <h2>Recent activity</h2>
+      <div id="audit"></div>
+    </section>
+  </div>
+</main>
+<script>
+const api = async (path, init) => {
+  const res = await fetch(path, init);
+  if (!res.ok) throw new Error(await res.text());
+  return res.status === 204 ? null : res.json();
+};
+
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function renderTools(state) {
+  const groups = {};
+  for (const t of state.tools) (groups[t.module] ??= []).push(t);
+
+  document.getElementById("tools").innerHTML = `
+    <div class="tool tool-head">
+      <span></span><span></span>
+      <span class="col">visible</span>
+      <span class="col">approval</span>
+    </div>` + Object.entries(groups).map(([mod, tools]) => `
+    <div class="group">
+      <div class="group-name">${esc(mod)}</div>
+      ${tools.map((t) => `
+        <div class="tool">
+          <div>
+            <div class="name">${esc(t.name)}</div>
+            <div class="desc">${esc(t.description)}</div>
+          </div>
+          <span class="badge ${t.destructive ? "write" : ""}">${t.destructive ? "write" : "read"}</span>
+          <label title="visible to MCP clients">
+            <input type="checkbox" data-tool="${esc(t.name)}" data-kind="enabled" ${t.enabled ? "checked" : ""}>
+          </label>
+          <label title="require approval before running">
+            <input type="checkbox" data-tool="${esc(t.name)}" data-kind="approval" ${t.requires_approval ? "checked" : ""} ${t.enabled ? "" : "disabled"}>
+          </label>
+        </div>`).join("")}
+    </div>`).join("");
+}
+
+function renderPending(items, resolve) {
+  const el = document.getElementById("pending");
+  if (!items.length) {
+    el.innerHTML = '<div class="hint" style="margin:0">Nothing waiting. Enable <b>Approval</b> on a tool to gate it.</div>';
+    return;
+  }
+  el.innerHTML = `<table class="pending">${items.map((p) => `
+    <tr>
+      <td><code>${esc(p.tool)}</code><br><span class="desc">${esc(JSON.stringify(p.args))}</span></td>
+      <td class="actions">
+        <button data-resolve="yes" data-id="${esc(p.id)}">Run</button>
+        <button class="danger" data-resolve="no" data-id="${esc(p.id)}">Drop</button>
+      </td>
+    </tr>`).join("")}</table>`;
+  void resolve;
+}
+
+function renderHealth(h) {
+  const el = document.getElementById("health");
+  const err = document.getElementById("health-error");
+  if (!h) { el.innerHTML = ""; err.textContent = "loading…"; return; }
+  if (h.error) { el.innerHTML = ""; err.textContent = h.error; return; }
+  err.textContent = "";
+  el.innerHTML = `
+    <div><span>Computer</span><b>${esc(h.computer_name)}</b></div>
+    <div><span>OS</span><b>${esc((h.os || "").replace(/^Microsoft /, ""))}</b></div>
+    <div><span>Uptime</span><b>${esc(h.uptime_hours)} h</b></div>
+    <div><span>CPU</span><b>${esc(h.cpu_load_pct)}%</b></div>
+    <div><span>Memory free</span><b>${esc(h.memory?.free_gb)} / ${esc(h.memory?.total_gb)} GB</b></div>
+    <div><span>Errors 24h</span><b>${esc(h.errors_last_24h)}</b></div>`;
+}
+
+function renderAudit(items) {
+  const el = document.getElementById("audit");
+  if (!items.length) { el.innerHTML = '<div class="hint" style="margin:0">No tool calls recorded yet.</div>'; return; }
+  el.innerHTML = `<table class="log"><tr><th>time</th><th>tool</th><th>src</th><th>ms</th><th></th></tr>${
+    items.map((r) => `<tr>
+      <td>${esc(r.ts.slice(11, 19))}</td>
+      <td>${esc(r.tool)}</td>
+      <td>${esc(r.source)}</td>
+      <td>${esc(r.durationMs)}</td>
+      <td class="${r.ok ? "ok" : "err"}">${r.ok ? "ok" : esc((r.error || "error").slice(0, 40))}</td>
+    </tr>`).join("")}</table>`;
+}
+
+let snapshot;
+
+async function refresh() {
+  snapshot = await api("/api/state");
+  document.getElementById("meta").textContent =
+    `${snapshot.tools.filter((t) => t.enabled).length} of ${snapshot.tools.length} tools enabled · config ${snapshot.config_path}`;
+  renderTools(snapshot);
+  renderPending(snapshot.pending);
+  renderAudit(snapshot.audit);
+  renderHealth(snapshot.health);
+}
+
+async function patch(body) {
+  await api("/api/tools", {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  await refresh();
+}
+
+document.getElementById("tools").addEventListener("change", (e) => {
+  const input = e.target;
+  if (!input.dataset?.tool) return;
+  if (input.dataset.kind === "enabled") patch({ enabled: { [input.dataset.tool]: input.checked } });
+  else patch({ requireApproval: { [input.dataset.tool]: input.checked } });
+});
+
+document.getElementById("pending").addEventListener("click", async (e) => {
+  const btn = e.target.closest?.("button[data-resolve]");
+  if (!btn) return;
+  await api(`/api/pending/${btn.dataset.id}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: btn.dataset.resolve === "yes" ? "confirm" : "cancel" }),
+  });
+  await refresh();
+});
+
+refresh().catch((err) => { document.getElementById("meta").textContent = String(err); });
+</script>
+</body>
+</html>

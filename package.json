@@ -1,0 +1,34 @@
+{
+  "name": "windows-admin-mcp",
+  "version": "0.1.0",
+  "description": "Windows administration MCP server with a web interface to switch tools on and off",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "windows-admin-mcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node ./scripts/copy-webui.mjs",
+    "dev": "npm run build && node --watch dist/index.js",
+    "test": "node scripts/mcp-smoke.mjs",
+    "start": "node dist/index.js",
+    "web": "node dist/index.js --http",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3"
+  }
+}

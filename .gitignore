@@ -1,0 +1,4 @@
+node_modules/
+dist/
+*.log
+windows-admin-mcp.audit.jsonl
