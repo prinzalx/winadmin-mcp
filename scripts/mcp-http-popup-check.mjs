@@ -124,8 +124,23 @@ let popupMessage = "";
 const patch = (path, body) =>
   fetch(`${BASE}${path}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
+/** Waits for the HTTP interface instead of guessing how long the process needs to start. */
+async function waitForServer(limitMs = 20_000) {
+  const until = Date.now() + limitMs;
+  for (;;) {
+    try {
+      const res = await fetch(`${BASE}/api/state`);
+      if (res.ok) return;
+    } catch {
+      // Not listening yet.
+    }
+    if (Date.now() > until) throw new Error("the server did not start listening");
+    await sleep(200);
+  }
+}
+
 try {
-  await sleep(1500);
+  await waitForServer();
 
   const init = await firstMessage(await send("initialize", {
     protocolVersion: "2025-06-18",
