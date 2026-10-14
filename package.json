@@ -22,7 +22,8 @@
     "dev": "npm run build && node --watch dist/index.js",
     "test": "node scripts/mcp-smoke.mjs",
     "start": "node dist/index.js",
-    "web": "node dist/index.js --http",
+    "web": "node dist/index.js",
+    "web:check": "node scripts/web-check.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

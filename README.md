@@ -246,11 +246,20 @@ matching requests.
 
 ## Configuration
 
-| Environment variable | Default | Purpose |
-|---|---|---|
-| `WAMD_PORT` | `8787` | port of the web interface |
-| `WAMD_CONFIG` | `%APPDATA%\windows-admin-mcp\config.json` | where the switches are stored |
-| `WAMD_AUDIT` | `%APPDATA%\windows-admin-mcp\audit.jsonl` | append-only audit trail |
+```bash
+node dist/index.js --help
+```
+
+| Switch | Environment variable | Default | Purpose |
+|---|---|---|---|
+| `--port <n>` | `WAMD_PORT` | `8787` | port of the web interface |
+| `--no-web` | `WAMD_NO_WEB=1` | off | stdio only, do not bind an HTTP port |
+| `--config <path>` | `WAMD_CONFIG` | `%APPDATA%\windows-admin-mcp\config.json` | where the switches are stored |
+| | `WAMD_AUDIT` | `%APPDATA%\windows-admin-mcp\audit.jsonl` | append-only audit trail |
+| `--help` | | | print the usage text and exit |
+
+The command line wins over the environment; both are optional. `--no-web` exists for setups where
+only the MCP client should reach the machine — no HTTP port, no UI, one less listener.
 
 The web UI writes `config.json`; editing it by hand works just as well:
 

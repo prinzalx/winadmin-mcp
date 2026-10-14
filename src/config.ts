@@ -27,7 +27,36 @@ export interface ConfigStore {
 
 const DEFAULT_PROTECTED = ["lsass", "csrss", "svchost", "winlogon", "smss", "services"];
 
+/**
+ * Reads `--flag value` and bare `--flag` from the command line. Command line wins over the
+ * environment, because an explicit invocation is the stronger signal.
+ */
+export function parseArgs(argv: readonly string[]): Map<string, string | boolean> {
+  const flags = new Map<string, string | boolean>();
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i] ?? "";
+    if (!arg.startsWith("--")) {
+      continue;
+    }
+    const name = arg.slice(2);
+    const next = argv[i + 1];
+    if (next !== undefined && !next.startsWith("--")) {
+      flags.set(name, next);
+      i += 1;
+    } else {
+      flags.set(name, true);
+    }
+  }
+  return flags;
+}
+
+export const ARGS = parseArgs(process.argv.slice(2));
+
 function defaultConfigPath(): string {
+  const cli = ARGS.get("config");
+  if (typeof cli === "string" && cli !== "") {
+    return cli;
+  }
   const override = process.env.WAMD_CONFIG;
   if (override) {
     return override;

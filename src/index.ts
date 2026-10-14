@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { createAuditLog } from "./audit.js";
-import { loadConfig } from "./config.js";
+import { ARGS, loadConfig } from "./config.js";
 import { ALL_TOOLS, TOOLS_BY_NAME } from "./modules/index.js";
 import { createSafety } from "./safety.js";
 import type { ToolContext, ToolDefinition } from "./types.js";
@@ -249,8 +249,25 @@ function serveHtml(res: ServerResponse): void {
   res.end(readFileSync(fileURLToPath(new URL("./webui.html", import.meta.url)), "utf8"));
 }
 
+const HELP = `winadmin-mcp — Windows administration MCP server
+
+usage: node dist/index.js [options]
+
+  --port <n>     web interface port (default 8787, env WAMD_PORT)
+  --no-web       do not start the web interface; stdio only
+  --config <p>   path to the JSON config file (env WAMD_CONFIG)
+  --help         show this text
+`;
+
 async function main(): Promise<void> {
-  const port = Number(process.env.WAMD_PORT ?? 8787);
+  if (ARGS.get("help") === true) {
+    process.stdout.write(HELP);
+    process.exit(0);
+  }
+
+  const webDisabled = ARGS.get("no-web") === true || process.env.WAMD_NO_WEB === "1";
+  const port = Number(ARGS.get("port") ?? process.env.WAMD_PORT ?? 8787);
+
   await refreshHealth().catch(() => undefined);
 
   const http = createServer(async (req, res) => {
@@ -282,8 +299,12 @@ async function main(): Promise<void> {
     }
   });
 
-  await new Promise<void>((resolve) => http.listen(port, resolve));
-  process.stderr.write(`windows-admin-mcp web interface: http://127.0.0.1:${String(port)}\n`);
+  if (webDisabled) {
+    process.stderr.write("windows-admin-mcp: web interface disabled\n");
+  } else {
+    await new Promise<void>((resolve) => http.listen(port, resolve));
+    process.stderr.write(`windows-admin-mcp web interface: http://127.0.0.1:${String(port)}\n`);
+  }
 
   // stdio is the MCP transport; the web interface keeps running in the same process.
   const { server, sync } = buildMcpServer();
