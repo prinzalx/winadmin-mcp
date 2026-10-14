@@ -1,6 +1,6 @@
 {
   "name": "winadmin-mcp",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Windows administration MCP server with a web interface to switch tools on and off",
   "type": "module",
   "license": "MIT",
@@ -20,7 +20,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node ./scripts/copy-webui.mjs",
     "dev": "npm run build && node --watch dist/index.js",
-    "test": "node scripts/mcp-smoke.mjs && node scripts/mcp-popup-check.mjs",
+    "test": "node scripts/mcp-smoke.mjs && node scripts/mcp-popup-check.mjs && node scripts/mcp-http-popup-check.mjs",
     "start": "node dist/index.js",
     "web": "node dist/index.js",
     "web:check": "node scripts/web-check.mjs",

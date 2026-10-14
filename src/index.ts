@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -104,8 +105,11 @@ async function askInClientPopup(
   parsedArgs: Record<string, unknown>,
   action: { id: string; tool: string },
   from: McpServer | undefined,
+  requestId?: string | number,
 ): Promise<ToolResult | undefined> {
   const elicit = (from ?? mcpServer)?.server;
+  // An empty `elicitation: {}` still means the client can answer a form; the SDK itself insists on
+  // the `form` sub-flag, and a throw there falls through to parking below.
   if (!elicit?.getClientCapabilities()?.elicitation) {
     return undefined;
   }
@@ -121,10 +125,13 @@ async function askInClientPopup(
           properties: { approved: { type: "boolean", title: "Approve", default: true } },
         },
       },
-      { timeout: 5 * 60 * 1000 },
+      // Over HTTP the answer must go back on the stream of this very call, which the SDK finds
+      // through relatedRequestId; stdio does not need it.
+      requestId === undefined ? { timeout: POPUP_TIMEOUT_MS } : { timeout: POPUP_TIMEOUT_MS, relatedRequestId: requestId },
     );
-  } catch {
-    // The client rejected the request or the timeout ended; parking is the safe fallback.
+  } catch (cause) {
+    // A client that claimed elicitation but cannot answer one must not lose the call: park instead.
+    process.stderr.write(`  popup failed (${String(cause instanceof Error ? cause.message : cause)}), parking instead\n`);
     return undefined;
   }
 
@@ -158,6 +165,7 @@ async function invoke(
   args: Record<string, unknown>,
   source: string,
   from?: McpServer,
+  requestId?: string | number,
 ): Promise<ToolResult> {
   const started = Date.now();
 
@@ -194,7 +202,7 @@ async function invoke(
       const action = safety.create(tool.name, args ?? {}, source);
       if (source === "mcp" && config.settings.askInAgent) {
         // First choice: the popup lives in the agent's TUI and the result comes back in this call.
-        const popup = await askInClientPopup(tool, parsed.data as Record<string, unknown>, action, from);
+        const popup = await askInClientPopup(tool, parsed.data as Record<string, unknown>, action, from, requestId);
         if (popup) {
           result = popup;
         } else {
@@ -239,7 +247,7 @@ async function confirmById(id: string, source: string): Promise<ToolResult> {
   if (!tool) {
     return fail(`Unknown tool "${pending.tool}"`);
   }
-  return invoke(tool, { ...pending.args, confirmation_id: id }, source);
+  return invoke(tool, { ...pending.args, confirmation_id: id }, source, undefined);
 }
 
 type RegisteredToolRef = { enabled: boolean };
@@ -248,7 +256,7 @@ type RegisteredToolRef = { enabled: boolean };
  * Builds a fresh MCP server with every tool registered, plus the meta tools. The returned
  * sync function mirrors the current enable switches onto the live tool list.
  */
-function buildMcpServer(): { server: McpServer; sync: (notify?: boolean) => void } {
+function buildMcpServer(): { server: McpServer; sync: (notify?: boolean) => void; dispose: () => void } {
   const server = new McpServer(
     { name: "winadmin-mcp", version: VERSION },
     { instructions: "Windows administration tools. Any tool can be switched off in the web interface. A tool whose approval switch is on asks the human in a popup when the client supports elicitation, and then answers with the real result; otherwise it returns a confirmation_id and waits for the human, and the agent must not confirm it itself unless the operator allows that." },
@@ -260,11 +268,11 @@ function buildMcpServer(): { server: McpServer; sync: (notify?: boolean) => void
     const registered = server.registerTool(
       tool.name,
       { title: tool.title, description: tool.description, inputSchema: zodShape(tool) as never },
-      ((args: Record<string, unknown>) => {
+      ((args: Record<string, unknown>, extra: { requestId?: string | number }) => {
         if (!config.settings.enabledTools[tool.name]) {
           return fail(`${tool.name} is disabled in the web interface`);
         }
-        return invoke(tool, args ?? {}, "mcp", server);
+        return invoke(tool, args ?? {}, "mcp", server, extra?.requestId);
       }) as never,
     );
     refs.set(tool.name, registered);
@@ -311,7 +319,11 @@ function buildMcpServer(): { server: McpServer; sync: (notify?: boolean) => void
   };
   sync();
 
-  return { server, sync };
+  // A session that ends must also stop listening: otherwise every web change would walk a list of
+  // servers that are long gone.
+  const unsubscribe = config.onChange(() => sync(true));
+
+  return { server, sync, dispose: unsubscribe };
 }
 
 function isEnabled(name: string): boolean {
@@ -323,6 +335,100 @@ function isEnabled(name: string): boolean {
 // ---------------------------------------------------------------------------
 
 let lastHealth: unknown = null;
+
+/**
+ * A client that declares `elicitation: {}` means the original form mode; only the SDK's
+ * `elicitInput` insists on the `form` sub-flag being spelled out. Filling it in keeps such a
+ * client from falling back to parking.
+ */
+function normalizeElicitationCaps(server: McpServer): void {
+  const elicitation = server.server.getClientCapabilities()?.elicitation as Record<string, unknown> | undefined;
+  if (elicitation && elicitation.form === undefined && elicitation.url === undefined) {
+    elicitation.form = {};
+  }
+}
+
+/**
+ * One MCP-over-HTTP session. The streamable transport has to be stateful here: a request that
+ * arrives later (the `tools/call`) still needs the capabilities the client reported at
+ * `initialize`, and it needs an open stream so the server can ask something back.
+ */
+interface McpHttpSession {
+  server: McpServer;
+  transport: StreamableHTTPServerTransport;
+  /** Stops the config subscription this session registered. */
+  dispose: () => void;
+  lastSeen: number;
+}
+
+const httpSessions = new Map<string, McpHttpSession>();
+
+/** Parked approvals wait for a human, so a sweep of idle sessions is done on every request. */
+const SESSION_IDLE_MS = 30 * 60 * 1000;
+
+/** How long a human may take over the approval popup before the action parks instead. */
+const POPUP_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * MCP over Streamable HTTP, with real sessions. Stateless-per-request would answer every
+ * `tools/call` with a server that never saw the client's `initialize`, so the client capabilities
+ * — and with them the approval popup — would always look absent.
+ */
+async function handleMcpHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  for (const [id, session] of httpSessions) {
+    if (Date.now() - session.lastSeen > SESSION_IDLE_MS) {
+      httpSessions.delete(id);
+      session.dispose();
+      await session.transport.close();
+      await session.server.close();
+    }
+  }
+
+  const wanted = req.headers["mcp-session-id"];
+  const sessionId = Array.isArray(wanted) ? wanted[0] : wanted;
+
+  let session = sessionId ? httpSessions.get(sessionId) : undefined;
+  if (sessionId && !session) {
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "Unknown MCP session" }));
+    return;
+  }
+
+  if (!session) {
+    const built = buildMcpServer();
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID() });
+    // The session must outlive the request that created it, so nothing is closed on `res.close`.
+  transport.onclose = () => {
+      const id = transport.sessionId;
+      if (id && httpSessions.has(id)) {
+        httpSessions.delete(id);
+        built.dispose();
+        void built.server.close();
+      }
+    };
+    await built.server.connect(transport);
+    await transport.handleRequest(req, res);
+    normalizeElicitationCaps(built.server);
+    if (transport.sessionId) {
+      httpSessions.set(transport.sessionId, { server: built.server, transport, dispose: built.dispose, lastSeen: Date.now() });
+    } else {
+      // A failed handshake: nothing to keep.
+      await transport.close();
+      await built.server.close();
+    }
+    return;
+  }
+
+  session.lastSeen = Date.now();
+  if (req.method === "DELETE") {
+    await session.transport.handleRequest(req, res);
+    httpSessions.delete(sessionId!);
+    session.dispose();
+    await session.server.close();
+    return;
+  }
+  await session.transport.handleRequest(req, res);
+}
 
 async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
   const send = (status: number, body: unknown) => {
@@ -482,14 +588,7 @@ async function main(): Promise<void> {
         return;
       }
       if (url.pathname === "/mcp") {
-        const { server } = buildMcpServer();
-        const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-        res.on("close", () => {
-          void transport.close();
-          void server.close();
-        });
-        await server.connect(transport);
-        await transport.handleRequest(req, res);
+        await handleMcpHttp(req, res);
         return;
       }
       if (req.method === "GET") {
@@ -522,13 +621,18 @@ async function main(): Promise<void> {
   const { server, sync } = buildMcpServer();
   mcpServer = server;
 
-  // Without this the terminal gives no hint that a client connected at all.
+  // Without this the terminal gives no hint that a client connected at all, and the popup needs
+  // to know whether the client can show one.
   server.server.oninitialized = () => {
+    normalizeElicitationCaps(server);
     const client = server.server.getClientVersion();
-    process.stderr.write(`  client connected: ${client?.name ?? "unknown"} ${client?.version ?? ""}\n`);
+    process.stderr.write(
+      `  client connected: ${client?.name ?? "unknown"} ${client?.version ?? ""}` +
+        ` — popup ${server.server.getClientCapabilities()?.elicitation ? "supported" : "not supported by this client"}\n`,
+    );
   };
-  // A committed change (one PATCH, however many switches it touched) is exactly one notification.
-  config.onChange(() => sync(true));
+  // The stdio server lives as long as the process, so its config subscription (registered inside
+  // buildMcpServer) is never removed.
   const stdio = new StdioServerTransport();
   await server.connect(stdio);
 

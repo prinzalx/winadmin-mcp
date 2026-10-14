@@ -31,8 +31,8 @@ export interface ConfigStore {
   readonly settings: Settings;
   readonly path: string;
   save(): void;
-  /** Subscribe to changes made through the web interface. */
-  onChange(listener: () => void): void;
+  /** Subscribe to changes made through the web interface. Returns a function that unsubscribes. */
+  onChange(listener: () => void): () => void;
   /** Notify subscribers and persist. Called after any settings mutation. */
   commit(): void;
 }
@@ -144,6 +144,10 @@ export function loadConfig(tools: ToolDefinition[]): ConfigStore {
     },
     onChange(listener) {
       listeners.push(listener);
+      return () => {
+        const index = listeners.indexOf(listener);
+        if (index >= 0) listeners.splice(index, 1);
+      };
     },
     commit() {
       this.save();

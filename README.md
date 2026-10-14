@@ -228,6 +228,16 @@ Decline or dismissal means: nothing ran, nothing parks, and the agent is told ex
 switch **ask in agent** in the *Awaiting approval* header turns this off; a client that never
 declared the elicitation capability is never asked and falls back to parking automatically.
 
+The terminal says which case it is, right after the handshake:
+
+```
+  client connected: hermes 1.4.0 — popup supported
+```
+
+If it reads `not supported by this client`, the client never asked for popups and the web interface
+decides instead. Over HTTP a session is kept alive between requests for the same reason: the
+`tools/call` needs both the capabilities from `initialize` and an open stream to ask on.
+
 ### Who is allowed to confirm
 
 When an action parks (popup off, or a client without elicitation), an agent that calls
@@ -421,9 +431,10 @@ npm run typecheck  # tsc --noEmit
 npm test           # smoke test: real server, real PowerShell
 ```
 
-`npm test` runs [`scripts/mcp-smoke.mjs`](scripts/mcp-smoke.mjs) and
-[`scripts/mcp-popup-check.mjs`](scripts/mcp-popup-check.mjs): both scripts spawn the server on a
-free port, perform a real MCP handshake and check 21 + 9 points — tool list, schema shape,
+`npm test` runs [`scripts/mcp-smoke.mjs`](scripts/mcp-smoke.mjs),
+[`scripts/mcp-popup-check.mjs`](scripts/mcp-popup-check.mjs) and
+[`scripts/mcp-http-popup-check.mjs`](scripts/mcp-http-popup-check.mjs): the scripts spawn the
+server on a free port, perform a real MCP handshake and check 21 + 9 + 8 points — tool list, schema shape,
 validation, a real `ping_host` call, approval parking (for a write tool and for a read-only one),
 that an agent may **not** confirm its own parked action by default, `list_pending`,
 `confirm_action`, unknown confirmation ID, and enable/disable including `list_changed`. Against real PowerShell/CIM output, not against a mock: a cmdlet parameter that does
@@ -454,6 +465,7 @@ scripts/
   copy-webui.mjs           src/webui.html -> dist/webui.html
   mcp-smoke.mjs            end-to-end over the real MCP transport
   mcp-popup-check.mjs      the approval popup, with a client that declares elicitation
+  mcp-http-popup-check.mjs  the same over Streamable HTTP, in its own session
   web-check.mjs            check HTML, /api/state and the switches
 skills/windows-triage/     sample skill for Hermes
 ```
