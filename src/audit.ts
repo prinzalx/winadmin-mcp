@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -17,6 +17,9 @@ export interface AuditLog {
   path: string;
   write(record: Omit<AuditRecord, "ts">): void;
   recent(limit?: number): AuditRecord[];
+  /** Increments on every clear, so the web UI notices a view that went empty. */
+  generation(): number;
+  clear(): void;
 }
 
 function defaultAuditPath(): string {
@@ -54,6 +57,7 @@ export function createAuditLog(): AuditLog {
   if (buffer.length > 200) {
     buffer = buffer.slice(-200);
   }
+  let generation = 0;
 
   return {
     path,
@@ -72,6 +76,19 @@ export function createAuditLog(): AuditLog {
     },
     recent(limit = 50) {
       return buffer.slice(-limit).reverse();
+    },
+    generation() {
+      return generation;
+    },
+    clear() {
+      buffer = [];
+      generation += 1;
+      try {
+        // Rewrite instead of append, otherwise the next start would reload the old entries.
+        writeFileSync(path, "", "utf8");
+      } catch {
+        // Same rule as write(): never let the audit file break the server.
+      }
     },
   };
 }

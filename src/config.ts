@@ -13,6 +13,12 @@ export interface Settings {
   maxBulkItems: number;
   /** Process names that may never be killed. */
   protectedProcesses: string[];
+  /**
+   * Whether an MCP client may confirm a parked action itself through `confirm_action`.
+   * Off by default: otherwise the agent parks its own action and immediately grants it, which
+   * makes the approval gate a round trip with no decision in it.
+   */
+  allowAgentConfirm: boolean;
 }
 
 export interface ConfigStore {
@@ -80,6 +86,7 @@ export function loadConfig(tools: ToolDefinition[]): ConfigStore {
     ),
     maxBulkItems: 20,
     protectedProcesses: [...DEFAULT_PROTECTED],
+    allowAgentConfirm: false,
   };
 
   let raw: unknown;
@@ -106,6 +113,9 @@ export function loadConfig(tools: ToolDefinition[]): ConfigStore {
     }
     if (Array.isArray(file.protectedProcesses)) {
       settings.protectedProcesses = file.protectedProcesses.map(String);
+    }
+    if (typeof file.allowAgentConfirm === "boolean") {
+      settings.allowAgentConfirm = file.allowAgentConfirm;
     }
   }
 

@@ -14,7 +14,59 @@ import { createSafety } from "./safety.js";
 import type { ToolContext, ToolDefinition } from "./types.js";
 import { fail, pending, text } from "./utils/result.js";
 
-const VERSION = "0.2.0";
+// Read from package.json so a release bump has exactly one place to be updated. The file sits
+// next to dist/ in every install, including a global npm one.
+const VERSION = (() => {
+  try {
+    const raw = readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8");
+    return String((JSON.parse(raw) as { version?: string }).version ?? "0.0.0");
+  } catch {
+    return "0.0.0";
+  }
+})();
+
+const RELEASES_URL = "https://github.com/prinzalx/winadmin-mcp/releases";
+const LATEST_URL = "https://api.github.com/repos/prinzalx/winadmin-mcp/releases/latest";
+
+/** Set by {@link checkForUpdate} when GitHub offers a newer release. */
+let latestVersion: string | null = null;
+
+/** Compares `1.2.3` style versions; a `v` prefix is tolerated on both sides. */
+function isNewer(candidate: string, current: string): boolean {
+  const parts = (s: string) => s.replace(/^v/i, "").split(".").map((n) => Number.parseInt(n, 10) || 0);
+  const a = parts(candidate);
+  const b = parts(current);
+  for (let i = 0; i < 3; i += 1) {
+    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
+  }
+  return false;
+}
+
+/**
+ * One lookup of the newest release, so the UI can point at an update.
+ *
+ * Off the critical path: the server starts whether or not GitHub answers, and
+ * `WAMD_NO_UPDATE_CHECK=1` skips it entirely (CI, machines without egress).
+ */
+async function checkForUpdate(): Promise<void> {
+  try {
+    const res = await fetch(LATEST_URL, {
+      headers: { "user-agent": "winadmin-mcp", accept: "application/vnd.github+json" },
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!res.ok) {
+      return;
+    }
+    const body = (await res.json()) as { tag_name?: string };
+    const tag = String(body.tag_name ?? "").replace(/^v/i, "");
+    if (tag !== "" && isNewer(tag, VERSION)) {
+      latestVersion = tag;
+      process.stderr.write(`  update available: ${tag} — running ${VERSION}\n`);
+    }
+  } catch {
+    // No egress or a GitHub hiccup; the version line already printed is enough.
+  }
+}
 
 const config = loadConfig(ALL_TOOLS);
 const audit = createAuditLog();
@@ -56,6 +108,14 @@ async function invoke(tool: ToolDefinition, args: Record<string, unknown>, sourc
     const confirmationId = (args ?? {}).confirmation_id;
 
     if (typeof confirmationId === "string") {
+      // An agent that parks an action and confirms it itself has granted itself permission, so
+      // the human in front of the web interface is asked by default. See allowAgentConfirm.
+      if (source === "mcp" && !config.settings.allowAgentConfirm) {
+        const message = `${tool.name}: approval is for the human in the web interface. The parked action stays pending.`;
+        audit.write({ tool: tool.name, args, ok: false, durationMs: Date.now() - started, source, error: message });
+        traceCall(tool.name, source, false, Date.now() - started, "agent may not confirm");
+        return fail(message);
+      }
       // The confirmation consumes the parked action; a second path with the same id must fail.
       if (!safety.take(confirmationId)) {
         const message = `Unknown or expired confirmation_id "${confirmationId}"`;
@@ -66,7 +126,8 @@ async function invoke(tool: ToolDefinition, args: Record<string, unknown>, sourc
       result = await tool.handler(parsed.data as Record<string, unknown>, ctx);
     } else if (safety.needsApproval(tool.name)) {
       const action = safety.create(tool.name, args ?? {}, source);
-      result = pending(action);
+      // Over HTTP the caller is the web interface, i.e. a human, so it always may confirm.
+      result = pending(action, source !== "mcp" || config.settings.allowAgentConfirm);
     } else {
       result = await tool.handler(parsed.data as Record<string, unknown>, ctx);
     }
@@ -114,7 +175,7 @@ type RegisteredToolRef = { enabled: boolean };
 function buildMcpServer(): { server: McpServer; sync: (notify?: boolean) => void } {
   const server = new McpServer(
     { name: "winadmin-mcp", version: VERSION },
-    { instructions: "Windows administration tools. Any tool can be switched off in the web interface; destructive tools can be gated behind an approval." },
+    { instructions: "Windows administration tools. Any tool can be switched off in the web interface. A tool whose approval switch is on returns a confirmation_id and waits for the human; an agent must not confirm it itself unless the operator allows that." },
   );
 
   const refs = new Map<string, RegisteredToolRef>();
@@ -216,7 +277,11 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
       })),
       pending: safety.list(),
       audit: audit.recent(25),
+      audit_generation: audit.generation(),
       health: lastHealth,
+      releases_url: RELEASES_URL,
+      latest_version: latestVersion,
+      allow_agent_confirm: config.settings.allowAgentConfirm,
     });
   }
 
@@ -236,6 +301,20 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
 
     config.commit();
     return send(200, { ok: true, saved_to: config.path });
+  }
+
+  if (url.pathname === "/api/settings" && req.method === "PATCH") {
+    const body = await readBody();
+    if (typeof body.allowAgentConfirm === "boolean") {
+      config.settings.allowAgentConfirm = body.allowAgentConfirm;
+    }
+    config.commit();
+    return send(200, { ok: true, allow_agent_confirm: config.settings.allowAgentConfirm });
+  }
+
+  if (url.pathname === "/api/audit/clear" && req.method === "POST") {
+    audit.clear();
+    return send(200, { ok: true, audit_path: audit.path });
   }
 
   const pendingMatch = /^\/api\/pending\/([\w-]+)$/.exec(url.pathname);
@@ -341,6 +420,7 @@ async function main(): Promise<void> {
   });
 
   process.stderr.write(`\n${BANNER}\n`);
+  process.stderr.write(`  version         v${VERSION}\n`);
 
   if (webDisabled) {
     process.stderr.write("  web interface disabled (--no-web)\n");
@@ -348,7 +428,11 @@ async function main(): Promise<void> {
     await new Promise<void>((resolve) => http.listen(port, resolve));
     process.stderr.write(`  web interface   http://127.0.0.1:${String(port)}\n`);
   }
-  process.stderr.write("  MCP transport   stdio — this terminal stays attached to the agent\n\n");
+  process.stderr.write("  MCP transport   stdio — this terminal stays attached to the agent\n");
+
+  // Printed after the transport lines so the update hint lands last, and never blocks startup.
+  if (process.env.WAMD_NO_UPDATE_CHECK !== "1") void checkForUpdate();
+  process.stderr.write("\n");
 
   // stdio is the MCP transport; the web interface keeps running in the same process.
   const { server, sync } = buildMcpServer();

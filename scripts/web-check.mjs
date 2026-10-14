@@ -30,6 +30,11 @@ console.log("confirm status/output:", confirmed.ok, "|", (confirmed.output ?? ""
 const after = await (await fetch("http://127.0.0.1:8802/api/state")).json();
 console.log("pending after:", after.pending.length, "| audit entries:", after.audit.length);
 
+// "Clear" in the web UI drops the recorded calls and rewrites the audit file.
+await post("/api/audit/clear", {});
+const cleared = await (await fetch("http://127.0.0.1:8802/api/state")).json();
+console.log("audit entries after clear:", cleared.audit.length, "| generation:", cleared.audit_generation);
+
 // The disabled/visible toggle round-trips through the config file.
 await fetch("http://127.0.0.1:8802/api/tools", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: { resolve_dns: false } }) });
 console.log("resolve_dns visible after toggle off:", (await (await fetch("http://127.0.0.1:8802/api/state")).json()).tools.find((t) => t.name === "resolve_dns").enabled);

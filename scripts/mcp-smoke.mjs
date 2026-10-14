@@ -147,13 +147,35 @@ try {
   await patchTools({ requireApproval: { restart_service: true } });
   const gated = await request("tools/call", { name: "restart_service", arguments: { name: "WSearch" } });
   const gatedText = gated.result?.content?.[0]?.text ?? "";
-  check("approval-required call parks the action", gatedText.includes("gated behind an approval"), gatedText.slice(0, 48));
+  check("approval-required call parks the action", Boolean(gated.result?.structuredContent?.confirmationId), gatedText.slice(0, 48));
 
   const pendingList = await request("tools/call", { name: "list_pending", arguments: {} });
   const pendingItems = pendingList.result?.structuredContent?.result ?? [];
   check("list_pending shows the parked action", Array.isArray(pendingItems) && pendingItems.length >= 1);
 
   const confirmId = pendingItems[0]?.id;
+
+  // An agent that confirms its own parked action grants itself permission, so by default it may not.
+  const selfRefused = await request("tools/call", {
+    name: "confirm_action",
+    arguments: { confirmation_id: confirmId },
+  });
+  check(
+    "the agent may not confirm its own action by default",
+    selfRefused.result?.isError === true && (selfRefused.result?.content?.[0]?.text ?? "").includes("for the human"),
+    selfRefused.result?.content?.[0]?.text ?? "",
+  );
+  check(
+    "the refused action is still parked",
+    ((await request("tools/call", { name: "list_pending", arguments: {} })).result?.structuredContent?.result ?? []).length >= 1,
+  );
+
+  await fetch(`http://127.0.0.1:${String(PORT)}/api/settings`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ allowAgentConfirm: true }),
+  });
+
   const confirmed = await request("tools/call", {
     name: "confirm_action",
     arguments: { confirmation_id: confirmId },
@@ -171,7 +193,7 @@ try {
   await patchTools({ requireApproval: { list_services: true } });
   const gatedRead = await request("tools/call", { name: "list_services", arguments: {} });
   const gatedReadText = gatedRead.result?.content?.[0]?.text ?? "";
-  check("approval gates a read-only tool as well", gatedReadText.includes("gated behind an approval"), gatedReadText.slice(0, 48));
+  check("approval gates a read-only tool as well", Boolean(gatedRead.result?.structuredContent?.confirmationId), gatedReadText.slice(0, 48));
   await patchTools({ requireApproval: { list_services: false } });
 
   const readNow = await request("tools/call", { name: "list_services", arguments: {} });

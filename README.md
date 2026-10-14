@@ -204,7 +204,21 @@ The gate is enforced in one central place, before any tool handler runs, so it a
 tool: a read-only call such as `list_services` parks just like `stop_service` when its approval
 switch is on. The read/write badge only describes what the tool does — it does not decide whether
 the gate can be used. An agent that receives a `confirmation_id` gets no data yet; it has to wait
-for the confirmation or call it again.
+for the confirmation.
+
+### Who is allowed to confirm
+
+An agent that calls `confirm_action` right after parking a call grants itself permission, which
+makes the gate a round trip with no decision in it. So **by default a parked action can only be run
+by a human** — through the web interface — and an agent that tries is refused and told to wait:
+
+```
+restart_service: approval is for the human in the web interface. The parked action stays pending.
+```
+
+The switch **agent may confirm** in the *Awaiting approval* header turns that off, for an agent that
+is allowed to decide. While a refusal is in effect, the parked action stays parked — one failed
+attempt does not consume the `confirmation_id`.
 
 ## The Web UI
 
@@ -214,23 +228,32 @@ The UI is a single file (`src/webui.html`, vanilla JS, no build step) with four 
 |---|---|
 | **Tools** | per module group one row per tool: name, description, read/write badge, and the two switches. The approval switch is disabled when the tool is off. |
 | **System** | the last `system_health` output — uptime, CPU, memory, drives, error count |
-| **Awaiting approval** | the parked actions with tool, arguments and the **Run** / **Drop** buttons |
-| **Recent activity** | the most recent audit entries: time, tool, success, duration, source |
+| **Awaiting approval** | the parked actions with tool, arguments and the **Run** / **Drop** buttons, plus the **agent may confirm** switch |
+| **Recent activity** | the most recent audit entries: time, tool, success, duration, source, with a **Clear** button in the heading |
+
+Below the two columns a footer shows the running version, and — when GitHub has a newer release — an
+**update available 0.x.y** link to the [releases page](https://github.com/prinzalx/winadmin-mcp/releases).
+The lookup happens once at startup and never blocks it; `WAMD_NO_UPDATE_CHECK=1` skips it entirely.
 
 The page polls `/api/state` every two seconds and re-renders only when something actually changed,
 so a tool call from the agent or a freshly parked action shows up without a manual reload. The
 audit list is also read back from the audit file at startup, which means the history survives a
 server restart.
 
+**Clear** in the *Recent activity* heading empties the list. It rewrites the audit file as well, so
+the entries do not come back on the next start; tool switches and pending approvals are untouched.
+
 ### HTTP Endpoints
 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/` | the UI |
-| `GET` | `/api/state` | version, configuration path, audit path, all tools with their switches, `pending`, the last 25 audit entries, last health snapshot |
+| `GET` | `/api/state` | version, configuration path, audit path, all tools with their switches, `pending`, the last 25 audit entries, last health snapshot, latest release version |
 | `PATCH` | `/api/tools` | `{"enabled": {…}, "requireApproval": {…}}` — write switches, save file, notify client |
+| `PATCH` | `/api/settings` | `{"allowAgentConfirm": true\|false}` — who may run a parked action |
 | `POST` | `/api/pending/<id>` | `{"action": "confirm"}` (default) or `{"action": "cancel"}` |
 | `POST` | `/api/run` | `{"tool": "…", "args": {…}}` — run a tool from the UI, even across the MCP channel |
+| `POST` | `/api/audit/clear` | drop the recorded calls and rewrite the audit file |
 | `ANY` | `/mcp` | MCP over Streamable HTTP, for clients without stdio |
 
 ### Master switches
@@ -324,6 +347,7 @@ node dist/index.js --help
 | `--no-web` | `WAMD_NO_WEB=1` | off | stdio only, do not bind an HTTP port |
 | `--config <path>` | `WAMD_CONFIG` | `%APPDATA%\winadmin-mcp\config.json` | where the switches are stored |
 | | `WAMD_AUDIT` | `%APPDATA%\winadmin-mcp\audit.jsonl` | append-only audit trail |
+| | `WAMD_NO_UPDATE_CHECK` | off | skip the one-time lookup of the newest release |
 | `--help` | | | print the usage text and exit |
 
 The command line wins over the environment; both are optional. `--no-web` exists for setups where
@@ -336,9 +360,13 @@ The web UI writes `config.json` with one entry per tool; editing it by hand work
   "enabledTools": { "query_events": true, "system_health": true },  // the rest: false
   "requireApprovalTools": { "stop_service": true },                  // the rest: false
   "maxBulkItems": 20,
-  "protectedProcesses": ["lsass", "csrss", "svchost", "winlogon", "smss", "services"]
+  "protectedProcesses": ["lsass", "csrss", "svchost", "winlogon", "smss", "services"],
+  "allowAgentConfirm": false
 }
 ```
+
+A config file written by an older version has no `allowAgentConfirm` entry, which means *false*: after
+an upgrade an agent can no longer confirm its own parked action.
 
 Every tool starts disabled, so an entry missing from `enabledTools` means *off*. A config file that
 an older version wrote with everything on keeps everything on — the default only applies to entries
@@ -354,8 +382,10 @@ Every call — success as well as failure — lands as a single JSON line in `au
  "ok":true,"durationMs":619,"source":"web"}
 ```
 
-`source` distinguishes `mcp` (agent) from `web` (human). The file grows append-only; rotation is so
-far the operator's job.
+`source` distinguishes `mcp` (agent) from `web` (human). In memory the trail is capped at the last
+200 entries and the UI shows the last 25, so the list cannot grow without bound. Beyond that,
+rotation is the operator's job — or the **Clear** button in the web UI, which drops the list and
+rewrites the file.
 
 ## Development
 
@@ -367,10 +397,10 @@ npm test           # smoke test: real server, real PowerShell
 ```
 
 `npm test` runs [`scripts/mcp-smoke.mjs`](scripts/mcp-smoke.mjs): the script spawns the server on a
-free port, performs a real MCP handshake and checks 19 points — tool list, schema shape,
+free port, performs a real MCP handshake and checks 21 points — tool list, schema shape,
 validation, a real `ping_host` call, approval parking (for a write tool and for a read-only one),
-`list_pending`, `confirm_action`, unknown confirmation ID, and enable/disable including
-`list_changed`. Against real PowerShell/CIM output, not against a mock: a cmdlet parameter that does
+that an agent may **not** confirm its own parked action by default, `list_pending`,
+`confirm_action`, unknown confirmation ID, and enable/disable including `list_changed`. Against real PowerShell/CIM output, not against a mock: a cmdlet parameter that does
 not exist in PowerShell 5.1 shows up here and not in front of the agent.
 
 ### Project Structure
