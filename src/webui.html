@@ -83,7 +83,7 @@
     user-select: none;
   }
   .master input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
-  .h2-actions { margin-left: auto; }
+  .h2-actions { margin-left: auto; display: inline-flex; gap: 14px; align-items: center; }
   .group { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 12px; }
   .group:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
   .group-name {
@@ -197,6 +197,9 @@
     <section>
       <h2>Awaiting approval
         <span class="h2-actions">
+          <label class="master" title="On: the approval is asked for in the agent's own popup (MCP elicitation) and the result goes back to the agent. Clients without that capability park the action here instead.">
+            <input type="checkbox" id="ask-in-agent">ask in agent
+          </label>
           <label class="master" title="Off: only this page may run a parked action. On: an agent may call confirm_action itself, which is really its own permission.">
             <input type="checkbox" id="agent-confirm">agent may confirm
           </label>
@@ -365,6 +368,7 @@ async function refresh(force = false) {
     snapshot.health,
     snapshot.latest_version,
     snapshot.allow_agent_confirm,
+    snapshot.ask_in_agent,
   ]);
   if (!force && next === signature) return;
   signature = next;
@@ -375,6 +379,7 @@ async function refresh(force = false) {
   renderHealth(snapshot.health);
   renderFooter(snapshot);
   document.getElementById("agent-confirm").checked = snapshot.allow_agent_confirm === true;
+  document.getElementById("ask-in-agent").checked = snapshot.ask_in_agent === true;
 }
 
 /** An agent can park an action or call a tool at any moment, so the page keeps itself current. */
@@ -418,17 +423,25 @@ for (const [id, kind] of [["all-enabled", "enabled"], ["all-approval", "approval
   });
 }
 
-document.getElementById("agent-confirm").addEventListener("change", async (e) => {
+async function patchSettings(body) {
   try {
     await api("/api/settings", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ allowAgentConfirm: e.target.checked }),
+      body: JSON.stringify(body),
     });
     await refresh(true);
   } catch (err) {
     document.getElementById("meta").textContent = String(err);
   }
+}
+
+document.getElementById("agent-confirm").addEventListener("change", (e) => {
+  patchSettings({ allowAgentConfirm: e.target.checked });
+});
+
+document.getElementById("ask-in-agent").addEventListener("change", (e) => {
+  patchSettings({ askInAgent: e.target.checked });
 });
 
 /** A master switch re-renders the whole list, so it must not block on the round trip. */

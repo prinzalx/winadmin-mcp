@@ -19,6 +19,12 @@ export interface Settings {
    * makes the approval gate a round trip with no decision in it.
    */
   allowAgentConfirm: boolean;
+  /**
+   * Ask for the approval inside the MCP client (an elicitation popup in its TUI) instead of only
+   * parking the action for the web interface. On by default, but it takes effect only for a
+   * client that declared the elicitation capability; every other client falls back to parking.
+   */
+  askInAgent: boolean;
 }
 
 export interface ConfigStore {
@@ -87,6 +93,7 @@ export function loadConfig(tools: ToolDefinition[]): ConfigStore {
     maxBulkItems: 20,
     protectedProcesses: [...DEFAULT_PROTECTED],
     allowAgentConfirm: false,
+    askInAgent: true,
   };
 
   let raw: unknown;
@@ -116,6 +123,9 @@ export function loadConfig(tools: ToolDefinition[]): ConfigStore {
     }
     if (typeof file.allowAgentConfirm === "boolean") {
       settings.allowAgentConfirm = file.allowAgentConfirm;
+    }
+    if (typeof file.askInAgent === "boolean") {
+      settings.askInAgent = file.askInAgent;
     }
   }
 

@@ -12,7 +12,7 @@ import { ARGS, loadConfig } from "./config.js";
 import { ALL_TOOLS, TOOLS_BY_NAME } from "./modules/index.js";
 import { createSafety } from "./safety.js";
 import type { ToolContext, ToolDefinition } from "./types.js";
-import { fail, pending, text } from "./utils/result.js";
+import { fail, gated, pending, text } from "./utils/result.js";
 
 // Read from package.json so a release bump has exactly one place to be updated. The file sits
 // next to dist/ in every install, including a global npm one.
@@ -86,13 +86,79 @@ function traceCall(tool: string, source: string, okFlag: boolean, ms: number, no
 }
 
 /**
+ * The stdio MCP server, set once in `main()`. Used as a fallback for the approval popup when a
+ * call is not tied to a specific connection.
+ */
+let mcpServer: McpServer | null = null;
+
+/**
+ * Asks for approval through the client's own popup (`elicitation/create`) and — if the human
+ * accepts — runs the action right here, so the result reaches the agent in the same call.
+ *
+ * Returns `undefined` when the client cannot or may not be asked (no elicitation capability,
+ * the `askInAgent` switch off, or the request failed); the caller then parks the action for the
+ * web interface like before.
+ */
+async function askInClientPopup(
+  tool: ToolDefinition,
+  parsedArgs: Record<string, unknown>,
+  action: { id: string; tool: string },
+  from: McpServer | undefined,
+): Promise<ToolResult | undefined> {
+  const elicit = (from ?? mcpServer)?.server;
+  if (!elicit?.getClientCapabilities()?.elicitation) {
+    return undefined;
+  }
+
+  let answer: Awaited<ReturnType<typeof elicit.elicitInput>>;
+  try {
+    answer = await elicit.elicitInput(
+      {
+        mode: "form",
+        message: `Run ${tool.name} ${JSON.stringify(parsedArgs)}?`,
+        requestedSchema: {
+          type: "object",
+          properties: { approved: { type: "boolean", title: "Approve", default: true } },
+        },
+      },
+      { timeout: 5 * 60 * 1000 },
+    );
+  } catch {
+    // The client rejected the request or the timeout ended; parking is the safe fallback.
+    return undefined;
+  }
+
+  // A form can also be submitted with the box unticked, which counts as a decline.
+  const approved = answer.action === "accept" && answer.content?.approved !== false;
+  if (!approved) {
+    // Decline and cancel both drop the parked action; nothing ran.
+    safety.cancel(action.id);
+    return gated(action, answer.action === "cancel" ? "cancelled" : "declined", fail("not executed"));
+  }
+  // `take` so a simultaneous "Run" in the web UI cannot execute the action a second time.
+  if (!safety.take(action.id)) {
+    return gated(action, "accepted", fail("already executed through the web interface"));
+  }
+  try {
+    return gated(action, "accepted", await tool.handler(parsedArgs, ctx));
+  } catch (cause) {
+    return gated(action, "accepted", fail(cause instanceof Error ? cause.message : String(cause)));
+  }
+}
+
+/**
  * Runs a tool with validation, the approval gate and auditing. Throws only on unexpected
  * handler bugs.
  *
- * The gate is central on purpose: *every* tool — not only a destructive one — parks when its
+ * The gate is central on purpose: *every* tool — not only a destructive one — is gated when its
  * approval switch is on, so a switch flipped in the web UI always has an effect.
  */
-async function invoke(tool: ToolDefinition, args: Record<string, unknown>, source: string): Promise<ToolResult> {
+async function invoke(
+  tool: ToolDefinition,
+  args: Record<string, unknown>,
+  source: string,
+  from?: McpServer,
+): Promise<ToolResult> {
   const started = Date.now();
 
   const parsed = tool.input.safeParse(args ?? {});
@@ -126,8 +192,18 @@ async function invoke(tool: ToolDefinition, args: Record<string, unknown>, sourc
       result = await tool.handler(parsed.data as Record<string, unknown>, ctx);
     } else if (safety.needsApproval(tool.name)) {
       const action = safety.create(tool.name, args ?? {}, source);
-      // Over HTTP the caller is the web interface, i.e. a human, so it always may confirm.
-      result = pending(action, source !== "mcp" || config.settings.allowAgentConfirm);
+      if (source === "mcp" && config.settings.askInAgent) {
+        // First choice: the popup lives in the agent's TUI and the result comes back in this call.
+        const popup = await askInClientPopup(tool, parsed.data as Record<string, unknown>, action, from);
+        if (popup) {
+          result = popup;
+        } else {
+          result = pending(action, config.settings.allowAgentConfirm);
+        }
+      } else {
+        // Over HTTP the caller is the web interface, i.e. a human, so it always may confirm.
+        result = pending(action, source !== "mcp" || config.settings.allowAgentConfirm);
+      }
     } else {
       result = await tool.handler(parsed.data as Record<string, unknown>, ctx);
     }
@@ -139,7 +215,7 @@ async function invoke(tool: ToolDefinition, args: Record<string, unknown>, sourc
       : undefined;
 
     audit.write({ tool: tool.name, args, ok: !failed, durationMs: ms, source, error: errorText });
-    traceCall(tool.name, source, !failed, ms, result.structuredContent && "confirmationId" in result.structuredContent ? "parked, waiting for approval" : undefined);
+    traceCall(tool.name, source, !failed, ms, result.structuredContent && "confirmationId" in result.structuredContent ? ("decision" in result.structuredContent ? "answered in client popup" : "parked, waiting for approval") : undefined);
     return result;
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
@@ -175,7 +251,7 @@ type RegisteredToolRef = { enabled: boolean };
 function buildMcpServer(): { server: McpServer; sync: (notify?: boolean) => void } {
   const server = new McpServer(
     { name: "winadmin-mcp", version: VERSION },
-    { instructions: "Windows administration tools. Any tool can be switched off in the web interface. A tool whose approval switch is on returns a confirmation_id and waits for the human; an agent must not confirm it itself unless the operator allows that." },
+    { instructions: "Windows administration tools. Any tool can be switched off in the web interface. A tool whose approval switch is on asks the human in a popup when the client supports elicitation, and then answers with the real result; otherwise it returns a confirmation_id and waits for the human, and the agent must not confirm it itself unless the operator allows that." },
   );
 
   const refs = new Map<string, RegisteredToolRef>();
@@ -188,7 +264,7 @@ function buildMcpServer(): { server: McpServer; sync: (notify?: boolean) => void
         if (!config.settings.enabledTools[tool.name]) {
           return fail(`${tool.name} is disabled in the web interface`);
         }
-        return invoke(tool, args ?? {}, "mcp");
+        return invoke(tool, args ?? {}, "mcp", server);
       }) as never,
     );
     refs.set(tool.name, registered);
@@ -282,6 +358,7 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
       releases_url: RELEASES_URL,
       latest_version: latestVersion,
       allow_agent_confirm: config.settings.allowAgentConfirm,
+      ask_in_agent: config.settings.askInAgent,
     });
   }
 
@@ -308,8 +385,15 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
     if (typeof body.allowAgentConfirm === "boolean") {
       config.settings.allowAgentConfirm = body.allowAgentConfirm;
     }
+    if (typeof body.askInAgent === "boolean") {
+      config.settings.askInAgent = body.askInAgent;
+    }
     config.commit();
-    return send(200, { ok: true, allow_agent_confirm: config.settings.allowAgentConfirm });
+    return send(200, {
+      ok: true,
+      allow_agent_confirm: config.settings.allowAgentConfirm,
+      ask_in_agent: config.settings.askInAgent,
+    });
   }
 
   if (url.pathname === "/api/audit/clear" && req.method === "POST") {
@@ -436,6 +520,7 @@ async function main(): Promise<void> {
 
   // stdio is the MCP transport; the web interface keeps running in the same process.
   const { server, sync } = buildMcpServer();
+  mcpServer = server;
 
   // Without this the terminal gives no hint that a client connected at all.
   server.server.oninitialized = () => {

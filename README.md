@@ -183,7 +183,7 @@ The web UI offers two switches per tool:
 | Switch | Off | On |
 |---|---|---|
 | **visible** | tool missing from `tools/list`; a call anyway → `… is disabled in the web interface` | usable normally |
-| **approval** | call executes immediately | call is parked, receipt with `confirmation_id` |
+| **approval** | call executes immediately | the human is asked — in the client popup if it can show one, otherwise parked with `confirmation_id` |
 
 ```mermaid
 flowchart TD
@@ -191,7 +191,10 @@ flowchart TD
     B -- no --> X["Error: disabled in the web interface"]
     B -- yes --> C{"approval on?"}
     C -- no --> E["Start PowerShell, return result"]
-    C -- yes --> D["Park the action, return confirmation_id"]
+    C -- yes --> P{"client can show a popup?"}
+    P -- yes, approved --> E
+    P -- "yes, declined" --> Y["nothing ran, agent is told"]
+    P -- no --> D["Park the action, return confirmation_id"]
     D --> F["Human decides: Run in the web UI or confirm_action(id)"]
     F --> E
 ```
@@ -204,13 +207,33 @@ The gate is enforced in one central place, before any tool handler runs, so it a
 tool: a read-only call such as `list_services` parks just like `stop_service` when its approval
 switch is on. The read/write badge only describes what the tool does — it does not decide whether
 the gate can be used. An agent that receives a `confirmation_id` gets no data yet; it has to wait
-for the confirmation.
+for the confirmation. An agent whose client answers the popup gets the real result in the same
+call.
+
+### Where the approval is asked (ask in agent)
+
+A parked action alone has a flaw: the human runs it in the web interface, but the **result** lands
+there and never reaches the agent — so the agent calls the tool again, and parks again, forever.
+
+Therefore a gated tool call asks for approval **inside the MCP client** first, through the standard
+MCP elicitation request (`elicitation/create`). A client with a TUI (Hermes, Claude Desktop, …)
+shows a popup right where the chat is — the same mechanism as an "option A / B / C" question. If
+the human approves there:
+
+- the tool executes immediately,
+- the result comes back **in the same tool call**,
+- nothing parks in the web interface.
+
+Decline or dismissal means: nothing ran, nothing parks, and the agent is told exactly that. The
+switch **ask in agent** in the *Awaiting approval* header turns this off; a client that never
+declared the elicitation capability is never asked and falls back to parking automatically.
 
 ### Who is allowed to confirm
 
-An agent that calls `confirm_action` right after parking a call grants itself permission, which
-makes the gate a round trip with no decision in it. So **by default a parked action can only be run
-by a human** — through the web interface — and an agent that tries is refused and told to wait:
+When an action parks (popup off, or a client without elicitation), an agent that calls
+`confirm_action` right after grants itself permission, which makes the gate a round trip with no
+decision in it. So **by default a parked action can only be run by a human** — through the web
+interface — and an agent that tries is refused and told to wait:
 
 ```
 restart_service: approval is for the human in the web interface. The parked action stays pending.
@@ -228,7 +251,7 @@ The UI is a single file (`src/webui.html`, vanilla JS, no build step) with four 
 |---|---|
 | **Tools** | per module group one row per tool: name, description, read/write badge, and the two switches. The approval switch is disabled when the tool is off. |
 | **System** | the last `system_health` output — uptime, CPU, memory, drives, error count |
-| **Awaiting approval** | the parked actions with tool, arguments and the **Run** / **Drop** buttons, plus the **agent may confirm** switch |
+| **Awaiting approval** | the parked actions with tool, arguments and the **Run** / **Drop** buttons, plus the **ask in agent** and **agent may confirm** switches |
 | **Recent activity** | the most recent audit entries: time, tool, success, duration, source, with a **Clear** button in the heading |
 
 Below the two columns a footer shows the running version, and — when GitHub has a newer release — an
@@ -250,7 +273,7 @@ the entries do not come back on the next start; tool switches and pending approv
 | `GET` | `/` | the UI |
 | `GET` | `/api/state` | version, configuration path, audit path, all tools with their switches, `pending`, the last 25 audit entries, last health snapshot, latest release version |
 | `PATCH` | `/api/tools` | `{"enabled": {…}, "requireApproval": {…}}` — write switches, save file, notify client |
-| `PATCH` | `/api/settings` | `{"allowAgentConfirm": true\|false}` — who may run a parked action |
+| `PATCH` | `/api/settings` | `{"allowAgentConfirm": true\|false, "askInAgent": true\|false}` — where the approval is asked and who may run a parked action |
 | `POST` | `/api/pending/<id>` | `{"action": "confirm"}` (default) or `{"action": "cancel"}` |
 | `POST` | `/api/run` | `{"tool": "…", "args": {…}}` — run a tool from the UI, even across the MCP channel |
 | `POST` | `/api/audit/clear` | drop the recorded calls and rewrite the audit file |
@@ -361,12 +384,14 @@ The web UI writes `config.json` with one entry per tool; editing it by hand work
   "requireApprovalTools": { "stop_service": true },                  // the rest: false
   "maxBulkItems": 20,
   "protectedProcesses": ["lsass", "csrss", "svchost", "winlogon", "smss", "services"],
-  "allowAgentConfirm": false
+  "allowAgentConfirm": false,
+  "askInAgent": true
 }
 ```
 
 A config file written by an older version has no `allowAgentConfirm` entry, which means *false*: after
-an upgrade an agent can no longer confirm its own parked action.
+an upgrade an agent can no longer confirm its own parked action. A missing `askInAgent` means *true*,
+so approval moves into the client popup wherever the client supports it.
 
 Every tool starts disabled, so an entry missing from `enabledTools` means *off*. A config file that
 an older version wrote with everything on keeps everything on — the default only applies to entries
@@ -396,8 +421,9 @@ npm run typecheck  # tsc --noEmit
 npm test           # smoke test: real server, real PowerShell
 ```
 
-`npm test` runs [`scripts/mcp-smoke.mjs`](scripts/mcp-smoke.mjs): the script spawns the server on a
-free port, performs a real MCP handshake and checks 21 points — tool list, schema shape,
+`npm test` runs [`scripts/mcp-smoke.mjs`](scripts/mcp-smoke.mjs) and
+[`scripts/mcp-popup-check.mjs`](scripts/mcp-popup-check.mjs): both scripts spawn the server on a
+free port, perform a real MCP handshake and check 21 + 9 points — tool list, schema shape,
 validation, a real `ping_host` call, approval parking (for a write tool and for a read-only one),
 that an agent may **not** confirm its own parked action by default, `list_pending`,
 `confirm_action`, unknown confirmation ID, and enable/disable including `list_changed`. Against real PowerShell/CIM output, not against a mock: a cmdlet parameter that does
@@ -427,6 +453,7 @@ src/
 scripts/
   copy-webui.mjs           src/webui.html -> dist/webui.html
   mcp-smoke.mjs            end-to-end over the real MCP transport
+  mcp-popup-check.mjs      the approval popup, with a client that declares elicitation
   web-check.mjs            check HTML, /api/state and the switches
 skills/windows-triage/     sample skill for Hermes
 ```
