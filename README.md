@@ -4,20 +4,19 @@
 [![Node](https://img.shields.io/badge/node-%E2%89%A5%2020-brightgreen)](https://nodejs.org)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Ein Windows-Admin-MCP-Server für Agenten (Claude Code, Codex, Hermes, …): **Dienste, Event-Logs,
-Prozesse, Netzwerk und Diagnose** über 20 scharf typisierte Werkzeuge — ohne dass der Agent selbst
-PowerShell-Zitate bauen muss.
+A Windows-admin MCP server for agents (Claude Code, Codex, Hermes, …): **services, event logs,
+processes, network and diagnostics** through 20 sharply typed tools — without the agent having to
+build PowerShell quotes itself.
 
-Dazu ein **Webinterface** (`http://127.0.0.1:8787`), in dem sich **jedes Werkzeug einzeln ein- und
-ausschalten** lässt. Was aus ist, verschwindet zur Laufzeit aus `tools/list` — der Agent sieht die
-Funktion schlicht nicht mehr und kann sie auch nicht aufrufen.
+Plus a **web interface** (`http://127.0.0.1:8787`), in which **every tool can be switched on and
+off individually**. What is off disappears from `tools/list` at runtime — the agent simply no longer
+sees the function and cannot call it either.
 
-**Inhalt** · [Schnellstart](#schnellstart) · [Warum so eng gebaut](#warum-so-eng-gebaut) ·
-[Werkzeuge](#werkzeuge) · [Approval-Gate](#approval-gate-und-umschalter) ·
-[Web-UI](#die-web-ui) · [Hermes](#hermes-agent) · [Konfiguration](#konfiguration) ·
-[Entwicklung](#entwicklung)
+**Contents** · [Quick Start](#quick-start) · [Why So Tightly Built](#why-so-tightly-built) ·
+[Tools](#tools) · [Approval Gate](#approval-gate-and-switches) · [Web UI](#the-web-ui) ·
+[Hermes](#hermes-agent) · [Configuration](#configuration) · [Development](#development)
 
-## Schnellstart
+## Quick Start
 
 ```bash
 npm ci
@@ -29,20 +28,20 @@ node dist/index.js
 windows-admin-mcp web interface: http://127.0.0.1:8787
 ```
 
-**stdio** ist der MCP-Transport; derselbe Prozess startet das HTTP-Interface. Beide Transporte
-teilen sich dieselbe Werkzeugliste, dieselben Schalter und denselben Audit-Trail — die Web-UI kann
-einem laufenden Agenten also live Werkzeuge wegnehmen, ohne dass der Agent neu starten muss.
+**stdio** is the MCP transport; the same process starts the HTTP interface. Both transports share
+the same tool list, the same switches and the same audit trail — so the web UI can take tools away
+from a running agent live, without the agent having to restart.
 
-Es sind zwei Rollen in einem Prozess: **stdio gehört dem Agenten**, der den Server beim Start selbst
-spawnnt und darin liest und schreibt. Das HTTP-Interface richtet sich an den Menschen und ist
-bewusst kein zweiter Server mit eigener Konfiguration.
+It is two roles in one process: **stdio belongs to the agent**, which spawns the server itself at
+startup and reads and writes within it. The HTTP interface is aimed at the human and is deliberately
+not a second server with its own configuration.
 
-Gebunden wird an `127.0.0.1`: Die UI löst administrative Aktionen aus, ein Zugriff aus dem Netz wäre
-erst nach TLS plus Authentifizierung sicher.
+Binding happens to `127.0.0.1`: the UI triggers administrative actions; access from the network
+would only be safe after TLS plus authentication.
 
-### Wie sich das anfühlt
+### What It Feels Like
 
-Ein echter Aufruf, ein echter Rechner:
+A real call, a real machine:
 
 ```jsonc
 // tools/call: get_service { "name": "Spooler" }
@@ -56,145 +55,162 @@ Ein echter Aufruf, ein echter Rechner:
 }
 ```
 
-Jede Antwort besteht aus zwei Teilen: einem lesbaren Kurztext für den Chat und
-`structuredContent` mit den Daten. Agenten können sich auf den Text verlassen, Modelle mit
-Schema-Bewusstsein auf die Struktur.
+Every response consists of two parts: a readable short text for the chat and `structuredContent`
+with the data. Agents can rely on the text, models with schema awareness on the structure.
 
-## Warum so eng gebaut
+## Why So Tightly Built
 
-| Regel | Grund |
+| Rule | Reason |
 |---|---|
-| **Ein Wrapper, ein Prozess** | Jede Aktion geht durch `src/utils/powershell.ts`, das genau einen `powershell.exe`-Prozess mit `-NoProfile -NonInteractive -ExecutionPolicy Bypass` startet, UTF-8 erzwingt und `$ErrorActionPreference = 'Stop'` setzt. Nur ein Ort, an dem Escape-Probleme entstehen können. |
-| **Nur lokal** | Alle Werkzeuge arbeiten gegen den eigenen Rechner. Es gibt keinen `ComputerName`-Parameter und damit kein Remote-Überraschungspotenzial. |
-| **Validierung vor Prozessstart** | Zod prüft die Eingabe, *bevor* PowerShell anfängt. Ein Tippfehler in einem Enum kostet keine 300 ms, sondern nur eine Fehlermeldung mit Pfad und Grund. |
-| **Escaping zentral** | Jede Eingabe, die in einen PowerShell-Befehl interpolationiert wird, läuft über `psQuote` (einfache Anführungszeichen, innen verdoppelt) — die Werte bleiben in Einzeln-Anführungs-Literalen inert. |
-| **Strukturierte Fehler** | `isError: true` plus Text; der MCP-Layer bleibt glücklich, das Modell sieht das Problem. Fehlgeschlagene Aufrufe landen mit Exit-Code, Dauer und Grund im Audit-Protokoll. |
-| **Kein Streaming** | Ergebnisse sind einmalige JSON-Dokumente. Wer Prozesse in Echtzeit beobachten will, ruft `list_processes` erneut auf. |
+| **One wrapper, one process** | Every action goes through `src/utils/powershell.ts`, which starts exactly one `powershell.exe` process with `-NoProfile -NonInteractive -ExecutionPolicy Bypass`, forces UTF-8 and sets `$ErrorActionPreference = 'Stop'`. Only one place where escape problems can arise. |
+| **Local only** | All tools work against the local machine. There is no `ComputerName` parameter and therefore no remote-surprise potential. |
+| **Validation before process start** | Zod checks the input *before* PowerShell starts. A typo in an enum does not cost 300 ms, only an error message with path and reason. |
+| **Escaping centralized** | Every input that is interpolated into a PowerShell command goes through `psQuote` (single quotes, doubled inside) — the values stay inert inside single-quote literals. |
+| **Structured errors** | `isError: true` plus text; the MCP layer stays happy, the model sees the problem. Failed calls land in the audit log with exit code, duration and reason. |
+| **No streaming** | Results are one-shot JSON documents. Anyone who wants to watch processes in real time calls `list_processes` again. |
 
-## Werkzeuge
+## Tools
 
-22 Werkzeuge insgesamt: 20 schaltbare aus fünf Modulen plus zwei permanente Governance-Werkzeuge.
+22 tools in total: 20 switchable ones from five modules plus two permanent governance tools.
 
-| Modul | schaltbar | permanent |
+| Module | switchable | permanent |
 |---|---|---|
-| **Dienste** | `list_services`, `get_service`, `start_service`, `stop_service`, `restart_service`, `set_service_startmode` | |
+| **Services** | `list_services`, `get_service`, `start_service`, `stop_service`, `restart_service`, `set_service_startmode` | |
 | **Events** | `query_events`, `summary_events`, `explain_event_id` | |
-| **Prozesse** | `list_processes`, `get_process`, `kill_process`, `check_ports` | |
-| **Netzwerk** | `ping_host`, `test_port`, `resolve_dns`, `list_interfaces` | |
-| **Diagnose** | `system_health`, `diagnose_service`, `get_windows_update` | |
+| **Processes** | `list_processes`, `get_process`, `kill_process`, `check_ports` | |
+| **Network** | `ping_host`, `test_port`, `resolve_dns`, `list_interfaces` | |
+| **Diagnostics** | `system_health`, `diagnose_service`, `get_windows_update` | |
 | **Governance** | | `list_pending`, `confirm_action` |
 
-Die beiden Governance-Werkzeuge sind immer aktiv und in der UI nicht schaltbar; sonst könnte ein
-Agent eine geparkte Aktion nicht mehr bestätigen, nachdem ihm das letzte Werkzeug deaktiviert wurde.
+The two governance tools are always active and not switchable in the UI; otherwise an agent could no
+longer confirm a parked action after its last tool had been disabled.
 
-### Referenz
+### Reference
 
-**Dienste**
+**Services**
 
-| Werkzeug | Eingabe | Antwort |
+| Tool | Input | Response |
 |---|---|---|
-| `list_services` | `name?` (Teilstring), `status?` = `Running` \| `Stopped` \| `Paused`, `startmode?`, `search?` (Name oder Anzeigename) | Name, Anzeigename, Zustand, Startmodus, Anmeldekonto, PID |
-| `get_service` | `name` (exakt, z. B. `WSearch`) | einzelner Dienst, wie die Beispielausgabe oben |
-| `start_service` · `stop_service` · `restart_service` | `name`, `confirmation_id?` | Kurzmeldung plus Zustand; *destructive* |
-| `set_service_startmode` | `name`, `startmode` = `automatic` \| `automatic_delayed` \| `manual` \| `disabled`, `confirmation_id?` | neuer Startmodus; *destructive* |
+| `list_services` | `name?` (substring), `status?` = `Running` \| `Stopped` \| `Paused`, `startmode?`, `search?` (name or display name) | name, display name, state, start mode, log-on account, PID |
+| `get_service` | `name` (exact, e.g. `WSearch`) | a single service, like the example output above |
+| `start_service` · `stop_service` · `restart_service` | `name`, `confirmation_id?` | short message plus state; *destructive* |
+| `set_service_startmode` | `name`, `startmode` = `automatic` \| `automatic_delayed` \| `manual` \| `disabled`, `confirmation_id?` | new start mode; *destructive* |
 
 **Events**
 
-| Werkzeug | Eingabe | Antwort |
+| Tool | Input | Response |
 |---|---|---|
-| `query_events` | `log?` = `System` (Standard) \| `Application` \| `Security` \| `Setup`, `level?` (`critical`…`info`), `hours?` (Standard 24), `event_id?`, `source?`, `max_events?` (Standard 50, max 1000) | neueste zuerst, jeder Eintrag mit Zeit, ID, Stufe, Provider und Meldung (auf 400 Zeichen gekürzt) |
-| `summary_events` | `log?`, `hours?` | Fehler- und Warnzählung pro Provider — der schnellste Weg zum Verantwortlichen |
-| `explain_event_id` | `event_id`, `log?` (nur für die Formulierung) | Bedeutung, Schweregrad, typische Ursache. **Kein Prozessstart**: reines Nachschlagen in `src/data/event-ids.ts` |
+| `query_events` | `log?` = `System` (default) \| `Application` \| `Security` \| `Setup`, `level?` (`critical`…`info`), `hours?` (default 24), `event_id?`, `source?`, `max_events?` (default 50, max 1000) | newest first, each entry with time, ID, level, provider and message (truncated to 400 characters) |
+| `summary_events` | `log?`, `hours?` | error and warning counts per provider — the fastest route to the culprit |
+| `explain_event_id` | `event_id`, `log?` (wording only) | meaning, severity, typical cause. **No process start**: pure lookup in `src/data/event-ids.ts` |
 
-**Prozesse**
+**Processes**
 
-| Werkzeug | Eingabe | Antwort |
+| Tool | Input | Response |
 |---|---|---|
-| `list_processes` | `name?` (Teilstring), `top?` (Standard 20, max 200), `sort?` = `cpu` \| `memory` (Standard) \| `name` | Top-Prozesse mit Arbeitsspeicher und Kommandozeile |
-| `get_process` | `name` (exakt, ohne `.exe`), `max_instances?` (max 100) | Details zu allen Instanzen des Namens |
-| `kill_process` | `name` (mit oder ohne `.exe`), `confirmation_id?` | beendet **alle** Instanzen; *destructive* |
-| `check_ports` | `port?`, `protocol?` = `TCP` \| `UDP` | ohne `port`: alle Ports mit Verbindungsanzahl; mit `port`: lauscht er oder nicht, plus Besitzprozess |
+| `list_processes` | `name?` (substring), `top?` (default 20, max 200), `sort?` = `cpu` \| `memory` (default) \| `name` | top processes with memory and command line |
+| `get_process` | `name` (exact, without `.exe`), `max_instances?` (max 100) | details for all instances of the name |
+| `kill_process` | `name` (with or without `.exe`), `confirmation_id?` | kills **all** instances; *destructive* |
+| `check_ports` | `port?`, `protocol?` = `TCP` \| `UDP` | without `port`: all ports with connection counts; with `port`: whether it is listening or not, plus owning process |
 
-`kill_process` verschont die geschützten Systemprozesse; der Versuch auf `lsass`, `csrss`,
-`svchost`, `winlogon`, `smss` oder `services` wird abgelehnt statt den Rechner zu destabilisieren.
+`kill_process` spares the protected system processes; an attempt on `lsass`, `csrss`, `svchost`,
+`winlogon`, `smss` or `services` is rejected instead of destabilizing the machine.
 
-**Netzwerk**
+**Network**
 
-| Werkzeug | Eingabe | Antwort |
+| Tool | Input | Response |
 |---|---|---|
-| `ping_host` | `host`, `count?` (Standard 4, max 10) | erreichbar ja/nein plus durchschnittliche Round-Trip-Zeit |
-| `test_port` | `host`, `port`, `timeout_ms?` (Standard 3000, max 30000) | ob die TCP-Verbindung angenommen wurde — der schnellste Firewall-/Erreichbarkeitstest |
-| `resolve_dns` | `name`, `record_type?` = `A` (Standard) \| `AAAA` \| `PTR` \| `MX` \| `TXT`, `server?` | Adressen mit Typ und TTL |
-| `list_interfaces` | `only_up?` | Interfaces mit Zustand und Adressen |
+| `ping_host` | `host`, `count?` (default 4, max 10) | reachable yes/no plus average round-trip time |
+| `test_port` | `host`, `port`, `timeout_ms?` (default 3000, max 30000) | whether the TCP connection was accepted — the fastest firewall/reachability test |
+| `resolve_dns` | `name`, `record_type?` = `A` (default) \| `AAAA` \| `PTR` \| `MX` \| `TXT`, `server?` | addresses with type and TTL |
+| `list_interfaces` | `only_up?` | interfaces with state and addresses |
 
-**Diagnose**
+**Diagnostics**
 
-| Werkzeug | Eingabe | Antwort |
+| Tool | Input | Response |
 |---|---|---|
-| `system_health` | – | Computername, OS und Build, Uptime, letzter Start, CPU-Last, Arbeitsspeicher, Datenträger, Fehlerzahl der letzten 24 h |
-| `diagnose_service` | `name` (exakt) | Zustand, Startmodus, Prozess, Abhängigkeiten und die letzten Logeinträge, die den Dienst erwähnen |
-| `get_windows_update` | `count?` (Standard 5, max 20) | Update-Zustand aus der Registry plus neueste Installationsergebnisse |
+| `system_health` | – | computer name, OS and build, uptime, last boot, CPU load, memory, drives, error count of the last 24 h |
+| `diagnose_service` | `name` (exact) | state, start mode, process, dependencies and the recent log entries that mention the service |
+| `get_windows_update` | `count?` (default 5, max 20) | update state from the registry plus the newest installation results |
 
-## Approval-Gate und Umschalter
+## Approval Gate and Switches
 
-Pro Werkzeug gibt es in der Web-UI zwei Schalter:
+The web UI offers two switches per tool:
 
-| Schalter | Aus | An |
+| Switch | Off | On |
 |---|---|---|
-| **visible** | Werkzeug fehlt in `tools/list`; ein Aufruf trotzdem → `… is disabled in the web interface` | normal nutzbar |
-| **approval** | Aufruf wird sofort ausgeführt | Aufruf wird geparkt, Quittung mit `confirmation_id` |
+| **visible** | tool missing from `tools/list`; a call anyway → `… is disabled in the web interface` | usable normally |
+| **approval** | call executes immediately | call is parked, receipt with `confirmation_id` |
 
 ```mermaid
 flowchart TD
-    A["Agent ruft Werkzeug auf"] --> B{"visible?"}
-    B -- nein --> X["Fehler: disabled in the web interface"]
-    B -- ja --> C{"approval an?"}
-    C -- nein --> E["PowerShell starten, Ergebnis liefern"]
-    C -- ja --> D["Aktion parken, confirmation_id zurückgeben"]
-    D --> F["Mensch entscheidet: Run in der Web-UI oder confirm_action(id)"]
+    A["Agent calls a tool"] --> B{"visible?"}
+    B -- no --> X["Error: disabled in the web interface"]
+    B -- yes --> C{"approval on?"}
+    C -- no --> E["Start PowerShell, return result"]
+    C -- yes --> D["Park the action, return confirmation_id"]
+    D --> F["Human decides: Run in the web UI or confirm_action(id)"]
     F --> E
 ```
 
-Geparkte Aktionen erscheinen in der Web-UI und werden dort mit **Run** oder **Drop** entschieden;
-`list_pending` zeigt sie dem Agenten, `confirm_action` führt eine per ID aus. Parkierte Aktionen
-verfallen nach 10 Minuten.
+Parked actions appear in the web UI and are decided there with **Run** or **Drop**; `list_pending`
+shows them to the agent, `confirm_action` executes one by ID. Parked actions expire after
+10 minutes.
 
-Die Approval-Schaltung ist bewusst **generisch**: sie gilt für jedes Werkzeug, das die UI als *write*
-markiert (`start_service`, `stop_service`, `restart_service`, `set_service_startmode`,
-`kill_process`), lässt sich aber für **jedes** Werkzeug einschalten — auch für Lesezugriffe, wenn
-man kontrollieren will, wann der Agent überhaupt PowerShell starten darf.
+The approval switch is deliberately **generic**: it applies to every tool the UI marks as *write*
+(`start_service`, `stop_service`, `restart_service`, `set_service_startmode`, `kill_process`), but
+can be turned on for **any** tool — including read access, if you want to control when the agent is
+allowed to start PowerShell at all.
 
-## Die Web-UI
+## The Web UI
 
-Die UI ist eine einzige Datei (`src/webui.html`, Vanilla JS, kein Build-Schritt) mit vier Bereichen:
+The UI is a single file (`src/webui.html`, vanilla JS, no build step) with four areas:
 
-| Bereich | Inhalt |
+| Area | Contents |
 |---|---|
-| **Tools** | pro Modul-Gruppe eine Zeile je Werkzeug: Name, Beschreibung, Lese-/Schreib-Abzeichen, und die zwei Schalter. Der Approval-Schalter ist deaktiviert, wenn das Werkzeug aus ist. |
-| **System** | die letzte `system_health`-Ausgabe — Uptime, CPU, Arbeitsspeicher, Datenträger, Fehlerzahl |
-| **Awaiting approval** | die geparkten Aktionen mit Werkzeug, Argumenten und den Buttons **Run** / **Drop** |
-| **Recent activity** | die letzten Audit-Einträge: Zeit, Werkzeug, Erfolg, Dauer, Quelle |
+| **Tools** | per module group one row per tool: name, description, read/write badge, and the two switches. The approval switch is disabled when the tool is off. |
+| **System** | the last `system_health` output — uptime, CPU, memory, drives, error count |
+| **Awaiting approval** | the parked actions with tool, arguments and the **Run** / **Drop** buttons |
+| **Recent activity** | the most recent audit entries: time, tool, success, duration, source |
 
-### HTTP-Endpunkte
+### HTTP Endpoints
 
-| Methode | Pfad | Zweck |
+| Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/` | die UI |
-| `GET` | `/api/state` | Version, Konfigurationspfad, Auditpfad, alle Werkzeuge mit ihren Schaltern, `pending`, letzte 25 Audit-Einträge, letzter Gesundheits-Snapshot |
-| `PATCH` | `/api/tools` | `{"enabled": {…}, "requireApproval": {…}}` — Schalter schreiben, Datei speichern, Client benachrichtigen |
-| `POST` | `/api/pending/<id>` | `{"action": "confirm"}` (Standard) oder `{"action": "cancel"}` |
-| `POST` | `/api/run` | `{"tool": "…", "args": {…}}` — Werkzeug aus der UI heraus ausführen, auch gegen den MCP-Kanal hinweg |
-| `ANY` | `/mcp` | MCP über Streamable HTTP, für Clients ohne stdio |
+| `GET` | `/` | the UI |
+| `GET` | `/api/state` | version, configuration path, audit path, all tools with their switches, `pending`, the last 25 audit entries, last health snapshot |
+| `PATCH` | `/api/tools` | `{"enabled": {…}, "requireApproval": {…}}` — write switches, save file, notify client |
+| `POST` | `/api/pending/<id>` | `{"action": "confirm"}` (default) or `{"action": "cancel"}` |
+| `POST` | `/api/run` | `{"tool": "…", "args": {…}}` — run a tool from the UI, even across the MCP channel |
+| `ANY` | `/mcp` | MCP over Streamable HTTP, for clients without stdio |
 
-Jede Umschaltung wird persistiert und per `notifications/tools/list_changed` an den MCP-Client
-gemeldet. Ein Client, der die Benachrichtigung ignoriert, sieht die Änderung spätestens zum nächsten
-`tools/list`.
+### Master switches
 
-## Hermes-Agent
+Above the list, the section heading carries two switches that act on **every** tool at once:
+`all visible` and `all approval`. Each module group repeats the pair in its own header, for the
+tools of that module only. Both are rendered as ordinary checkboxes and follow the state of their
+members:
 
-[Hermes](https://github.com/NousResearch/hermes-agent) spricht MCP von Haus aus: unsere Tools
-erscheinen dort als `mcp_winadmin_*`, und Änderungen an der Werkzeugliste übernimmt Hermes live —
-die Ein-/Aus-Schalter wirken also ohne Neustart des Agenten.
+| Members | Checkbox |
+|---|---|
+| all on | checked |
+| none on | unchecked |
+| some on, some off | indeterminate (dash) |
+
+Switching a master writes the value for all its members in one `PATCH /api/tools` request, so the
+config file is saved once and the client gets one `list_changed` — not one per tool. A master
+applies to all its members, including tools that are currently hidden; the per-row approval switch
+being greyed out only concerns that row.
+
+Every switch change is persisted and reported to the MCP client via
+`notifications/tools/list_changed`. A client that ignores the notification sees the change at the
+latest on the next `tools/list`.
+
+## Hermes Agent
+
+[Hermes](https://github.com/NousResearch/hermes-agent) speaks MCP out of the box: our tools appear
+there as `mcp_winadmin_*`, and Hermes picks up changes to the tool list live — so the on/off
+switches take effect without restarting the agent.
 
 ```yaml
 # ~/.hermes/config.yaml   (Windows: C:\Users\<user>\.hermes\config.yaml)
@@ -202,40 +218,41 @@ mcp_servers:
   winadmin:
     command: "node"
     args: ["C:/BLOB/output/001/dist/index.js"]
-    # optional, z. B. für ein schlankeres Kontextfenster:
+    # optional, e.g. for a leaner context window:
     # tools:
     #   exclude: ["get_windows_update"]
 ```
 
 ```
-> hey hermes, mein System ist vorhin abgestürzt — schau dir die Event Logs an,
-  was könnte die Ursache sein?
+> hey hermes, my system crashed earlier — take a look at the event logs,
+  what could be the cause?
 ```
 
-Für diesen einen Satz braucht Hermes kein Sonderkommando, sondern vier Werkzeuge: `system_health`
-für Uptime und Zeitpunkt des letzten Starts, `query_events` (`log: System`, `level: error`) für das
-Fenster seit dem Boot, `explain_event_id` für Kernel-Power 41, EventLog 6008 oder Service Control
-Manager 7000/7031/7034 — und `diagnose_service`, wenn ein Dienst der Auslöser war.
+For this one sentence Hermes needs no special command, but four tools: `system_health` for uptime
+and the time of the last boot, `query_events` (`log: System`, `level: error`) for the window since
+the boot, `explain_event_id` for Kernel-Power 41, EventLog 6008 or Service Control Manager
+7000/7031/7034 — and `diagnose_service`, if a service was the trigger.
 
-Für genau diesen Workflow liegt unter [`skills/windows-triage/SKILL.md`](skills/windows-triage/SKILL.md)
-eine Beispiel-Skill bei, die Hermes den Triage-Ablauf beibringt: erst nachschauen, dann behaupten.
+For exactly this workflow, a sample skill ships at
+[`skills/windows-triage/SKILL.md`](skills/windows-triage/SKILL.md); it teaches Hermes the triage
+routine: look first, then claim.
 
 ```powershell
 copy -Recurse skills\windows-triage $env:USERPROFILE\.hermes\skills\
 ```
 
-Danach steht die Skill in Hermes unter `/windows-triage` zur Verfügung und wird bei passenden
-Anfragen automatisch angeboten.
+After that the skill is available in Hermes under `/windows-triage` and is offered automatically for
+matching requests.
 
-## Konfiguration
+## Configuration
 
-| Umgebungsvariable | Vorgabe | Zweck |
+| Environment variable | Default | Purpose |
 |---|---|---|
-| `WAMD_PORT` | `8787` | Port des Webinterfaces |
-| `WAMD_CONFIG` | `%APPDATA%\windows-admin-mcp\config.json` | Speicherort der Schalter |
-| `WAMD_AUDIT` | `%APPDATA%\windows-admin-mcp\audit.jsonl` | Append-only-Audit-Trail |
+| `WAMD_PORT` | `8787` | port of the web interface |
+| `WAMD_CONFIG` | `%APPDATA%\windows-admin-mcp\config.json` | where the switches are stored |
+| `WAMD_AUDIT` | `%APPDATA%\windows-admin-mcp\audit.jsonl` | append-only audit trail |
 
-Die `config.json` schreibt die Web-UI; von Hand bearbeiten geht genauso:
+The web UI writes `config.json`; editing it by hand works just as well:
 
 ```jsonc
 {
@@ -246,88 +263,88 @@ Die `config.json` schreibt die Web-UI; von Hand bearbeiten geht genauso:
 }
 ```
 
-Werkzeuge sind per Vorgabe aktiv, damit der Server out of the box funktioniert; deaktiviert ist erst,
-was die Datei explizit ausschaltet. Die Pfade sind bewusst absolut — ein relativer Pfad würde gegen
-das Arbeitsverzeichnis des MCP-Clients aufgelöst, und das ist je Client verschieden.
+Tools are active by default so the server works out of the box; something is only disabled once the
+file explicitly switches it off. The paths are deliberately absolute — a relative path would be
+resolved against the working directory of the MCP client, and that differs per client.
 
-### Audit-Trail
+### Audit Trail
 
-Jeder Aufruf — Erfolg wie Misserfolg — landet als eine JSON-Zeile in `audit.jsonl`:
+Every call — success as well as failure — lands as a single JSON line in `audit.jsonl`:
 
 ```json
 {"ts":"2026-10-14T14:12:53.332Z","tool":"get_service","args":{"name":"Spooler"},
  "ok":true,"durationMs":619,"source":"web"}
 ```
 
-`source` unterscheidet `mcp` (Agent) von `web` (Mensch). Die Datei wächst append-only; Rotation ist
-bisher Aufgabe des Betriebes.
+`source` distinguishes `mcp` (agent) from `web` (human). The file grows append-only; rotation is so
+far the operator's job.
 
-## Entwicklung
+## Development
 
 ```bash
-npm run build      # tsc + src/webui.html nach dist/ kopieren
-npm run dev        # bauen und mit node --watch neu starten
+npm run build      # tsc + copy src/webui.html to dist/
+npm run dev        # build and restart with node --watch
 npm run typecheck  # tsc --noEmit
-npm test           # Smoke-Test: echter Server, echte PowerShell
+npm test           # smoke test: real server, real PowerShell
 ```
 
-`npm test` führt [`scripts/mcp-smoke.mjs`](scripts/mcp-smoke.mjs): Das Skript spawnt den Server auf
-einem freien Port, macht einen echten MCP-Handshake und prüft 16 Punkte — Werkzeugliste,
-Schema-Form, Validierung, einen echten `ping_host`-Aufruf, Approval-Parkierung, `list_pending`,
-`confirm_action`, unbekannte Bestätigungs-ID sowie Enable/Disable inklusive
-`list_changed`. Gegen echte PowerShell/CIM-Ausgabe, nicht gegen ein Mock: ein Cmdlet-Parameter, der
-in PowerShell 5.1 nicht existiert, fällt hier auf und nicht beim Agenten.
+`npm test` runs [`scripts/mcp-smoke.mjs`](scripts/mcp-smoke.mjs): the script spawns the server on a
+free port, performs a real MCP handshake and checks 16 points — tool list, schema shape,
+validation, a real `ping_host` call, approval parking, `list_pending`, `confirm_action`, unknown
+confirmation ID, and enable/disable including
+`list_changed`. Against real PowerShell/CIM output, not against a mock: a cmdlet parameter that does
+not exist in PowerShell 5.1 shows up here and not in front of the agent.
 
-### Projektstruktur
+### Project Structure
 
 ```
 src/
-  index.ts                 stdio- und HTTP-Server, MCP-Handler, Bootstrap
-  config.ts                Schalter laden/speichern, Änderungen abonnieren
-  safety.ts                Approval-Registry: parken, peek/take, Verfall nach 10 min
-  audit.ts                 Append-only-JSONL-Trail aller Aufrufe
+  index.ts                 stdio and HTTP server, MCP handler, bootstrap
+  config.ts                load/save switches, subscribe to changes
+  safety.ts                approval registry: park, peek/take, expiry after 10 min
+  audit.ts                 append-only JSONL trail of all calls
   types.ts                 ToolDefinition, ToolContext
-  data/event-ids.ts        Wissensbasis für explain_event_id
+  data/event-ids.ts        knowledge base for explain_event_id
   modules/
-    services/              Liste, Zustand, Start/Stopp/Neustart, Startmodus
-    events/                Query, Zusammenfassung, Event-ID-Erklärung
-    processes/             Prozessliste, Details, Kill, lauschende Ports
-    network/               Ping, Port-Test, DNS, Interfaces
+    services/              list, state, start/stop/restart, start mode
+    events/                query, summary, event-ID explanation
+    processes/             process list, details, kill, listening ports
+    network/               ping, port test, DNS, interfaces
     diagnostics/           system_health, diagnose_service, get_windows_update
   utils/
-    powershell.ts          Der einzige Ort, der einen Prozess startet
-    result.ts              ok/text/fail/pending — einheitliche Ergebnisse
-    gate.ts                Approval-Gate für alle destruktiven Werkzeuge
-  webui.html               Die komplette Web-UI (kein Build-Schritt nötig)
+    powershell.ts          the only place that starts a process
+    result.ts              ok/text/fail/pending — uniform results
+    gate.ts                approval gate for all destructive tools
+  webui.html               the complete web UI (no build step needed)
 scripts/
-  copy-webui.mjs           src/webui.html → dist/webui.html
-  mcp-smoke.mjs            End-to-End über den echten MCP-Transport
-  web-check.mjs            HTML, /api/state und die Schalter prüfen
-skills/windows-triage/     Beispiel-Skill für Hermes
+  copy-webui.mjs           src/webui.html -> dist/webui.html
+  mcp-smoke.mjs            end-to-end over the real MCP transport
+  web-check.mjs            check HTML, /api/state and the switches
+skills/windows-triage/     sample skill for Hermes
 ```
 
-Ein neues Werkzeug anzulegen ist absichtlich billig: eine `ToolDefinition` in einem Modul-Ordner
-(oder ein neuer Ordner in `src/modules/`), fertig — die UI, die Werkzeugliste und die
-`/api/state`-Auswertung ziehen sich alles aus derselben Liste.
+Creating a new tool is deliberately cheap: a `ToolDefinition` in a module folder (or a new folder in
+`src/modules/`), done — the UI, the tool list and the `/api/state` evaluation all draw from the same
+list.
 
-## Bekannte Grenzen
+## Known Limitations
 
-- **Nur Windows.** Benutzt `powershell.exe` (5.1), CIM-Namespaces und die
-  `Get-NetTCPConnection`- bzw. `Get-WinEvent`-Cmdlets. PowerShell 7 wird nicht erkannt und wird
-  nicht gebraucht.
-- **Lokalisierte Meldungen.** Zustandstexte und Event-Meldungen kommen so aus Windows, wie das
-  System eingestellt ist (auf einem deutschen Windows also deutsch). `explain_event_id` antwortet
-  dagegen immer Englisch, weil die Wissensbasis im Repo liegt.
-- **Zeitfenster.** `query_events` und `summary_events` nehmen `hours` an (Standard 24). Wer einen
-  Crash seit dem letzten Boot sucht, setzt `hours` passend klein — seit dem Boot rechnet man am
-  besten über die Uptime aus `system_health`.
-- **Kosten pro Aufruf.** Jeder Werkzeugaufruf kostet einen PowerShell-Prozess, typisch 0,3–2 s je
-  nach Systemlast. `explain_event_id` ist die Ausnahme: reiner Datenlookup, kein Prozessstart.
-- **`maxBulkItems` ist vorbereitet, aber unverbaut.** Der Wert liegt in der Konfiguration und wird
-  von keinem Werkzeug ausgewertet; er ist für zukünftige Massenaktionen gedacht.
-- **Kein Auth.** Die UI ist nur lokal gebunden. Ohne TLS und Login gehört sie nicht hinter einen
-  Reverse-Proxy für mehrere Menschen.
+- **Windows only.** Uses `powershell.exe` (5.1), CIM namespaces and the
+  `Get-NetTCPConnection` and `Get-WinEvent` cmdlets. PowerShell 7 is not detected and is not
+  needed.
+- **Localized messages.** State texts and event messages come out of Windows exactly as the system
+  is configured (on a German Windows, in German). `explain_event_id`, by contrast, always answers in
+  English, because the knowledge base lives in the repo.
+- **Time window.** `query_events` and `summary_events` take `hours` (default 24). Anyone looking for
+  a crash since the last boot sets `hours` small to match — for "since boot" it is best to compute
+  from the uptime in `system_health`.
+- **Cost per call.** Every tool call costs a PowerShell process, typically 0.3-2 s depending on
+  system load. `explain_event_id` is the exception: pure data lookup, no process start.
+- **`maxBulkItems` is prepared but not wired up.** The value sits in the configuration and is
+  evaluated by no tool; it is intended for future bulk actions.
+- **No auth.** The UI is bound to local only. Without TLS and login it does not belong behind a
+  reverse proxy for multiple people.
 
-## Lizenz
+## License
 
 MIT
