@@ -1,7 +1,7 @@
 ---
 name: windows-triage
 description: Diagnose a Windows machine that crashed, froze, rebooted itself, or is behaving strangely by reading the local event logs and system health through the winadmin-mcp tools. Use when the user says the system crashed or blue-screened, "ist abgestürzt", restarted on its own, a service died, or asks what caused a Windows outage or why the machine is slow.
-version: 0.3.0
+version: 0.4.0
 platforms: [windows]
 metadata:
   hermes:
@@ -11,145 +11,137 @@ metadata:
 
 # Windows-Triage
 
-Bringt Hermes bei, eine Windows-Maschine anhand von Beweisen zu diagnostizieren statt aus dem
-Gedächtnis. Voraussetzung ist ein laufender `winadmin`-MCP-Server; alle genannten Werkzeuge
-erscheinen dort mit dem Präfix `mcp_winadmin_`.
+Teaches Hermes to diagnose a Windows machine from evidence instead of from memory. It assumes a
+running `winadmin` MCP server; every tool named here appears there with the `mcp_winadmin_`
+prefix.
 
-## Wann benutzen
+## When to use it
 
-- "Mein System ist vorhin abgestürzt / gecrasht."
-- "Warum hat der Rechner einfach neu gestartet?"
-- "Irgendein Dienst spinnt / ist tot."
-- "Der Rechner ist so langsam."
+- "My system crashed a moment ago."
+- "Why did the machine just reboot on its own?"
+- "Some service is misbehaving / is dead."
+- "The machine is so slow."
 
-## Vorgehen
+## Procedure
 
-Arbeite die Schritte in dieser Reihenfolge ab und urteile erst am Ende.
+Work the steps in this order and only judge at the end.
 
-1. **Bezugspunkt.** `system_health` liefert `uptime_hours` und `last_boot`. Damit ist das
-   Zeitfenster definiert: Alles, was der User "vorhin" nennt, liegt nach `last_boot`. Der Rest der
-   Ausgabe (CPU-Last, freier Arbeitsspeicher, Datenträger, `errors_last_24h`, `logged_in_users`) ist
-   schon der erste Verdacht, ob Ressourcen das Problem sind.
-2. **Fundstelle.** `query_events` mit `log: "System"`, `level: "error"`,
-   `hours` gerade groß genug für das Ereignis, `max_events: 50`. Nur wenn das leer ist, auf
-   `hours: 24` erweitern.
-3. **Critics getrennt.** Gleicher Aufruf mit `level: "critical"`. Critical-Events sind die
-   eigentlichen Absturz-Kandidaten; ein kritischer Eintrag zwei Tage vor dem Boot ist nicht die
-   Ursache des aktuellen Problems.
-4. **Rauschen einordnen.** `summary_events` (`log: "System"`) zeigt, welcher Provider am häufigsten
-   Fehler oder Warnungen meldet. Ein Provider mit 400 DCOM-Einträgen ist Tapete, kein Beweis.
-5. **IDs übersetzen.** Jeden relevanten Eintrag mit `explain_event_id` (eine ID pro Aufruf)
-   nachschlagen. Häufige Kandidaten:
+1. **Point of reference.** `system_health` returns `uptime_hours` and `last_boot`, which defines the
+   time window: everything the user calls "a moment ago" happened after `last_boot`. The rest of the
+   answer (CPU load, free memory, drives, `errors_last_24h`, `logged_in_users`) is already the first
+   suspicion of whether resources are the problem.
+2. **Find the scene.** `query_events` with `log: "System"`, `level: "error"`, `hours` just wide
+   enough for the event, `max_events: 50`. Only if that comes back empty, widen it to `hours: 24`.
+3. **Criticals separately.** Same call with `level: "critical"`. Critical events are the actual
+   crash candidates; a critical entry two days before the boot is not the cause of the current
+   problem.
+4. **Put the noise in perspective.** `summary_events` (`log: "System"`) shows which provider reports
+   the most errors or warnings. A provider with 400 DCOM entries is wallpaper, not evidence.
+5. **Translate the ids.** Look up every relevant entry with `explain_event_id` (one id per call).
+   Common candidates:
 
-   | Quelle / Ereignis-ID | Bedeutung |
+   | Provider / event id | Meaning |
    |---|---|
-   | Kernel-Power 41 | Neustart ohne sauberen Shutdown — Stromweg, Hard-Reset oder Bugcheck |
-   | EventLog 6008 | Letztes Herunterfahren war unerwartet |
-   | EventLog 6005 / 6006 | Ereignisprotokoll gestartet / sauber beendet |
-   | Service Control Manager 7000 | Dienst konnte nicht starten (Abhängigkeit, Pfad, Zugriff) |
-   | Service Control Manager 7001 | Dienstabhängigkeit fehlgeschlagen |
-   | Service Control Manager 7031 / 7034 | Dienst unerwartet beendet — kein Stopp, sondern Absturz |
-   | Service Control Manager 7009 / 7011 | Timeout beim Start bzw. bei einer Service-Steueranfrage |
-   | DCOM 10010 / 10016 | DCOM-Server nicht rechtzeitig registriert / Zugriff verweigert — meist Rauschen |
+   | Kernel-Power 41 | Restart without a clean shutdown — power pulled, hard reset or bugcheck |
+   | EventLog 6008 | The last shutdown was unexpected |
+   | EventLog 6005 / 6006 | Event log started / ended cleanly |
+   | Service Control Manager 7000 | Service could not start (dependency, path, access) |
+   | Service Control Manager 7001 | Service dependency failed |
+   | Service Control Manager 7031 / 7034 | Service terminated unexpectedly — not a stop, a crash |
+   | Service Control Manager 7009 / 7011 | Timeout while starting or on a service control request |
+   | DCOM 10010 / 10016 | DCOM server not registered in time / access denied — usually noise |
 
-6. **Dienst rekonstruieren.** Bei 7000/7031/7034 den betroffenen Dienst mit `diagnose_service`
-   prüfen: aktueller Zustand, Startmodus, Prozess, Abhängigkeiten und die letzten Logeinträge, die
-   den Dienst erwähnen. Bei zwei Tagen Logmaterial ist das meist die vollständige Geschichte.
-7. **Ressourcen.** `list_processes` mit `sort: "cpu"` und noch einmal mit `sort: "memory"`
-   (Vorgabe) zeigt, ob ein Ausreißer das Muster erklärt. `get_process` für einen namentlich
-   bekannten Übeltäter.
-8. **Erst jetzt urteilen.** Ursache, Beweis (Protokoll, Quelle, ID, Zeitstempel) und empfohlene
-   Maßnahme — in dieser Reihenfolge.
+6. **Reconstruct the service.** For 7000/7031/7034, check the service with `diagnose_service`:
+   current state, start mode, process, dependencies and the recent log entries that mention it. With
+   two days of log material that is usually the whole story.
+7. **Resources.** `list_processes` with `sort: "cpu"` and again with `sort: "memory"` (the default)
+   shows whether an outlier explains the pattern. `get_process` for a perpetrator you can name.
+8. **Only now judge.** Cause, evidence (log, provider, id, timestamp) and recommended action — in
+   that order.
 
-## Vertiefung
+## Going deeper
 
-Wenn die Basis-Triage keine Ursache ergibt, nach derselben Logik weiterbohren — jedes Werkzeug
-zählt nur, wenn das vorherige nichts gebracht hat:
+When the basic triage gives no cause, keep drilling with the same logic — each tool only counts when
+the previous one brought nothing:
 
-- **Vorher gelernt?** `list_learnings` (oder gleich `search_events` mit Worten aus der Meldung)
-  vor jeder eigenen Analyse. Ein Eintrag mit verdict `benign` ist eine fertige Antwort, kein
-  Grund für eine Suche. Steht die Entscheidung fest, mit `add_learning` notieren
-  (`note` in normalem Deutsch/Englisch, `verdict`, `event_id` wenn bekannt).
-- **Hat sich was geändert?** `system_changes` (Standard 7 Tage) listet installierte Hotfixes und
-  Programme — "was ging dem Crash voraus". `error_trends` zeigt pro Provider, ob die Fehler
-  wachsen, schrumpfen oder gleich sind; ein Provider, der nur im aktuellen Fenster auftaucht
-  (`new`), ist meist der interessanteste Fund.
-- ** Läuft alles, was laufen sollte?** `services_watch` liefert die Autostart-Dienste, die nicht
-  laufen. `service_restarts` findet Dienste, die im Fenster mehrfach gestoppt wurden
-  (Crash-Loop).
-- **Neues seit dem letzten Blick?** `events_watch` gibt nur die Events **seit dem letzten Aufruf**
-  zurück (Watermark pro Log und Level). Ideal zum Pollen; `reset: true` vergisst den Watermark.
-- **Geplante Aufgaben.** Wenn ein Wartungsjob nicht lief: `list_tasks` (`name` als
-  Teilzeichenkette), dann `get_task` für Definition/Konto/letztes Ergebnis, `task_history` für
-  die Laufhistorie. Ergebniscode `0` = Erfolg, `0x41303` = läuft noch, `0x41306` = abgebrochen.
-- **Registry-Verdacht.** `read_registry_key` liest Werte samt Typ (Zahlen zusätzlich als Hex).
-  Schreiben (`write_registry_value`) exportiert den Schlüssel vorher als `.reg` — der Pfad der
-  Sicherung steht in der Antwort.
-- **Security-Oberfläche.** `check_elevation` vor jedem Schreibversuch klären (Serverprozess,
-  nicht User). `get_security_events` filtert das Security-Log auf Logon-/Prozess-/Privileg-
-  Ereignisse und erklärt jede ID. `analyze_pe` für eine verdächtige Datei ohne sie auszuführen.
-- **Mailed Logs.** `.evtx` von einem anderen Rechner mit `parse_evtx` lesen, statt zu raten.
+- **Learned this before?** `list_learnings` (or `search_events` straight away, with words from the
+  message) before any analysis of your own. An entry with verdict `benign` is a finished answer, not
+  a reason to search. Once the verdict is settled, note it with `add_learning` (`note` in plain
+  German or English, `verdict`, `event_id` when known).
+- **Did anything change?** `system_changes` (7 days by default) lists installed hotfixes and programs
+  — "what came before the crash". `error_trends` shows per provider whether the errors are growing,
+  shrinking or steady; a provider that only appears in the current window (`new`) is usually the most
+  interesting find.
+- **Is everything running that should?** `services_watch` returns the auto-start services that are
+  not running. `service_restarts` finds services stopped several times in the window (crash loop).
+- **Anything new since last look?** `events_watch` returns only the events **since the previous
+  call** (a watermark per log and level). Ideal for polling; `reset: true` forgets the watermark.
+- **Scheduled tasks.** When a maintenance job did not run: `list_tasks` (`name` as a substring), then
+  `get_task` for the definition, account and last result, `task_history` for the run history. Result
+  code `0` is success, `0x41303` is still running, `0x41306` was aborted.
+- **Registry suspicion.** `read_registry_key` reads values including their type (numbers additionally
+  as hex). Writing (`write_registry_value`) exports the key as a `.reg` first — the path of the
+  backup is in the answer.
+- **Security surface.** Clear `check_elevation` before any write attempt (the server process, not the
+  user). `get_security_events` filters the Security log to logon, process and privilege events and
+  names every id. `analyze_pe` for a suspicious file without executing it.
+- **Mailed logs.** Read an `.evtx` from another machine with `parse_evtx` instead of guessing.
 
-## Regeln
+## Rules
 
-- **Nur lesen.** Für diese Triage keine `start_service`-, `stop_service`- oder `kill_process`-
-  Aktion auslösen. Wenn eine Aktion sinnvoll ist, dem User vorschlagen statt sie eigenmächtig
-  auszuführen.
-- **Approval-Gate.** Steht ein Tool auf Approval, fragt der Server zuerst im Agenten (Popup in
-  `hermes --tui`), und das Ergebnis kommt im selben Aufruf zurück. Kann der Client kein Popup
-  zeigen, parkt die Aktion mit `confirmation_id` — und dann gilt: **nie die eigene geparkte
-  Aktion selbst bestätigen**, sonst ist das Gate wirkungslos. Lieber dem User sagen, dass die
-  Aktion im Web-Interface auf Run wartet, und jede ungeklärte Park-Runde erhöht nur die Pending-
-  Liste.
-- **Zeitfenster ehrlich halten.** "Vorhin" heißt seit `last_boot`, "heute" heißt seit Mitternacht.
-  Das verwendete Fenster in der Antwort nennen, damit der User das Urteil nachprüfen kann.
-- **Nicht über unbekannte IDs spekulieren.** `explain_event_id` antwortet auch für unbekannte IDs
-  (`No entry for event id …`); dann offen sagen, dass die Nummer nicht bekannt ist, statt einen
-  Text zu erfinden.
-- **Ein leeres Ergebnis ist eine Antwort.** Keine Fehler im System-Log seit dem Boot heißt
-  wahrscheinlich: der Absturz hat kein Event geschrieben. Dann `Application` und
-  `get_windows_update` ansehen und das Ergebnis als "kein Hinweis im System-Log" formulieren, nicht
-  als "kein Problem".
-- **Ausgaben kürzen.** `max_events` begrenzt die Menge; JSON-Blöcke nicht ungefiltert
-  wiedergeben, sondern die drei bis fünf relevanten Einträge hervorheben.
+- **Read only.** For this triage do not trigger a `start_service`, `stop_service` or `kill_process`
+  action. When an action makes sense, suggest it to the user instead of running it on your own
+  authority.
+- **The approval gate.** A tool set to Approval asks the agent first (a popup in `hermes --tui`), and
+  the result comes back in the same call. If the client cannot show a popup, the action parks with a
+  `confirmation_id` — and then this applies: **never confirm your own parked action**, otherwise the
+  gate is pointless. Tell the user the action is waiting for Run in the web interface instead, and
+  every unresolved parking round only grows the pending list.
+- **Keep the time window honest.** "A moment ago" means since `last_boot`, "today" means since
+  midnight. Name the window you used in the answer, so the user can recheck the verdict.
+- **Do not speculate about unknown ids.** `explain_event_id` answers for unknown ids too
+  (`No entry for event id …`); then say openly that the number is unknown instead of inventing a text.
+- **An empty result is an answer.** No errors in the System log since the boot probably means the
+  crash wrote no event. Then look at `Application` and `get_windows_update`, and phrase the result as
+  "no hint in the System log", not as "no problem".
+- **Cut the output.** `max_events` bounds the amount; do not replay JSON blocks unfiltered, but pick
+  the three to five relevant entries.
 
-## Grenzen der Werkzeuge
+## Limits of the tools
 
-Die Antworten sind seit v0.5.2 bis v0.5.4 unabhängig von der Windows-Sprache. Was trotzdem
-überbleibt, ist Sache des Systems, nicht des Servers — lieber kennen als falsch deuten:
+The answers are independent of the Windows display language since v0.5.2 to v0.5.4. What remains is a
+property of the system, not of the server — better to know it than to misread it:
 
-- **Level ist immer englisch.** `level` kommt als `critical`/`error`/`warning`/`info` heraus, die
-  lokale Übersetzung liegt in `level_display` (`query_events`). Auf Deutsch heißt eine Warnung
-  eben „Warnung" — danach filtern, nicht gegen `level`.
-- **Zeiten sind ISO-8601 (UTC).** Überall; ein `/Date(…)/` taucht nicht mehr auf.
-- **`task_history` braucht den Operational-Log.** `Microsoft-Windows-TaskScheduler/Operational` ist
-  ab Windows 8 zwar vorhanden, aber oft deaktiviert. Leere Antwort plus deaktivierter Log ist kein
-  Parserfehler; `list_tasks` und `get_task` funktionieren davon unabhängig.
-- **`get_minifilters` braucht Elevierung.** Ohne Rechte antwortet es mit dem rohen
-  Zugriff-verweigert-Text und leerer Liste. Die Tabelle selbst wird über die Zahlspalten gelesen,
-  also unabhängig von der Header-Sprache.
-- **`list_drivers` liest die VersionInfo der `.sys`.** Der `creator` kommt aus der Datei auf dem
-  Datenträger, weil `Win32_SystemDriver` den Hersteller leer lässt. Kostet etwa eine Sekunde für
-  alle Treiber; eine nicht lesbare Datei ergibt einen leeren `creator`, keinen Fehler.
-- **`get_windows_update` antwortet aus dem Update-Client-Log.** Der Registry-Schlüssel
-  `Auto Update\Results` fehlt auf neueren Windows; Dienstate, anstehender Neustart und die
-  Ereignis-IDs 19/20/24/25/43 sind die belastbare Quelle.
-- **Nach einem Server-Neustart ist der Katalog beim Agenten neu.** Der Server schickt
-  `tools/list_changed`, aber ob der Client ihn übernimmt, entscheidet er selbst — bei Hermes erst
-  ein `manage_connections enable` (Hermes-seitig) bringt die Tools zurück. Wenn also *alle* Tools
-  fehlen, war gerade ein Neustart im Spiel, nicht der Ausschalter im Web-Interface.
+- **The level is always english.** `level` comes out as `critical`/`error`/`warning`/`info`; the
+  localized text is in `level_display` (`query_events`). On a German system a warning is called
+  "Warnung" — filter on that if you must, but not against `level`.
+- **Times are ISO-8601 (UTC).** Everywhere; a `/Date(…)/` no longer appears.
+- **`task_history` needs the operational log.** `Microsoft-Windows-TaskScheduler/Operational` exists
+  since Windows 8 but is often disabled. An empty answer plus a disabled log is not a parser failure;
+  `list_tasks` and `get_task` work independently of it.
+- **`get_minifilters` needs elevation.** Without rights it answers with the raw access-denied text and
+  an empty list. The table itself is read from its numeric columns, so the language of the header
+  does not matter.
+- **`list_drivers` reads the version info of the `.sys`.** The `creator` comes from the file on disk,
+  because `Win32_SystemDriver` leaves its manufacturer empty. It costs about a second for all drivers;
+  a file that cannot be opened yields an empty `creator`, not an error.
+- **`get_windows_update` answers from the update client log.** The `Auto Update\Results` registry key
+  is missing on newer Windows; the service state, a pending reboot and the event ids
+  19/20/24/25/43 are the reliable source.
+- **After a server restart the agent's catalog is new.** The server sends `tools/list_changed`, but
+  whether the client picks it up is the client's decision — in Hermes the tools only come back after
+  a `manage_connections enable` (a Hermes-side command). So if *every* tool is missing, a restart was
+  involved, not a switched-off row in the web interface.
 
-## Beispiel
+## Example
 
-> **User:** hey hermes, mein System ist vorhin gecrasht, check mal die Eventlogs was die Ursache
-> sein könnte
+> **User:** hey hermes, my system crashed earlier, check the event logs for what could be the cause
 
-`system_health` → Uptime 0,7 h, letzter Boot 14:18 → `query_events(log: "System", level: "error",
-hours: 1)` → ein Treffer Service Control Manager 7034 um 14:31 → `explain_event_id(7034)` und
+`system_health` → uptime 0.7 h, last boot 14:18 → `query_events(log: "System", level: "error",
+hours: 1)` → one hit, Service Control Manager 7034 at 14:31 → `explain_event_id(7034)` and
 `explain_event_id(7000)` → `diagnose_service("Spooler")`.
 
-> **Antwort:** Kein Bluescreen: der Druckspooler wurde um 14:31 unerwartet beendet (System, Service
-> Control Manager, Ereignis 7034). Kernel-Power 41 fehlt im Fenster seit dem Boot um 14:18, das
-> System ist also danach sauber hochgefahren. Der Dienst läuft inzwischen wieder, hat aber
-> Startmodus "Manuell" — ich würde den Startmodus auf "Automatisch" setzen, das mache ich aber nur
-> auf Zuruf.
+> **Answer:** No bluescreen: the print spooler terminated unexpectedly at 14:31 (System, Service
+> Control Manager, event 7034). Kernel-Power 41 is missing in the window since the boot at 14:18, so
+> the system came up cleanly afterwards. The service runs again by now but its start mode is
+> "Manual" — I would set the start mode to "Automatic", but I only do that on request.
