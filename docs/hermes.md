@@ -1,7 +1,9 @@
 # Hermes Agent
 
-[Hermes](https://github.com/NousResearch/hermes-agent) speaks MCP out of the box: our tools appear
-there as `mcp_winadmin_*`, and Hermes picks up changes to the tool list live — so the on/off
+[Hermes](https://github.com/NousResearch/hermes-agent) speaks MCP out of the box. It prefixes our
+tool names itself, and so does every other client, so the exact name differs per client (Hermes
+uses `mcp__winadmin__<tool>`, others use `mcp_winadmin_<tool>`). Hermes picks up changes to the
+tool list live — so the on/off
 switches take effect without restarting the agent. Only *enabled* tools appear, so on a fresh
 install Hermes sees the two governance tools until you switch things on.
 

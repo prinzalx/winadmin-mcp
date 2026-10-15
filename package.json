@@ -1,6 +1,6 @@
 {
   "name": "winadmin-mcp",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "description": "Windows administration MCP server with a web interface to switch tools on and off",
   "type": "module",
   "license": "MIT",

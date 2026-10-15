@@ -161,7 +161,7 @@ committed to a repo it becomes a shared team memory.
 | `add_learning` | `note` (plain words), `verdict`, `event_id?`, `provider?`, `tags?`, `author?` | stores the decision; *destructive* |
 | `forget_learning` | `id` (from `list_learnings`), `confirmation_id?` | removes one entry; *destructive* |
 | `search_events` | `words` (e.g. `"disk reset"`), `log?` (default `System`), `hours?` (default 24), `max_events?` (default 20) | log entries matched **by words in the message**, each annotated with the learnings that score highest for its id and provider |
-| `parse_evtx` | `path` (one `.evtx` file, or several separated by commas), `event_id?`, `max_rows?` (default 50) | reads an exported event file the way the event viewer does, with counts per id and provider — for logs someone mailed you |
+| `parse_evtx` | `path` (one `.evtx` file, or several separated by commas), `event_id?`, `max_rows?` (default 50) | reads an exported event file the way the event viewer does, with counts per id and provider — for logs someone mailed you; an `event_id` narrows the rows (and reports `matched_events`) while the counts stay about the whole file |
 | `export_learnings` | `format?` = `json` (default) \| `csv` | the whole memory as text, ready to share |
 
 `add_learning` is the tool an agent calls after a human tells it something: *"finding 2 is our EDR,

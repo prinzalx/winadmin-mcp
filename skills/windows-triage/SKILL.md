@@ -1,7 +1,7 @@
 ---
 name: windows-triage
 description: Diagnose a Windows machine that crashed, froze, rebooted itself, or is behaving strangely by reading the local event logs and system health through the winadmin-mcp tools. Use when the user says the system crashed or blue-screened, "ist abgestürzt", restarted on its own, a service died, or asks what caused a Windows outage or why the machine is slow.
-version: 0.4.0
+version: 0.4.1
 platforms: [windows]
 metadata:
   hermes:
@@ -12,8 +12,9 @@ metadata:
 # Windows-Triage
 
 Teaches Hermes to diagnose a Windows machine from evidence instead of from memory. It assumes a
-running `winadmin` MCP server; every tool named here appears there with the `mcp_winadmin_`
-prefix.
+running `winadmin` MCP server. Every tool named here appears there under a name the client builds
+itself, so the prefix differs per client (Hermes uses `mcp__winadmin__`, others use
+`mcp_winadmin_`); match on the tool name behind the prefix.
 
 ## When to use it
 

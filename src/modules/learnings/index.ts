@@ -274,15 +274,21 @@ export const learningsTools: ToolDefinition[] = [
       const id = args.event_id === undefined ? undefined : Number(args.event_id);
 
       const quoted = files.map((f) => psQuote(f)).join(", ");
+      // The id is filtered in PowerShell rather than through -FilterXPath, because combining
+      // -FilterXPath with -Path makes Get-WinEvent reject the query on some systems ("the query is
+      // invalid") even though the very same query is accepted when the log is named. Filtering in
+      // memory also keeps the group counts about the whole file, which is what the docs promise.
       const script =
         `$files = @(${quoted}); $missing = @($files | Where-Object { -not (Test-Path -LiteralPath $_) }); ` +
         "if ($missing.Count -gt 0) { Write-Output ('missing|' + ($missing -join ', ')); exit }; " +
-        `$e = Get-WinEvent -Path $files -ErrorAction SilentlyContinue${id ? ` -FilterXPath "*[System[(EventID=${String(id)}]]]"` : ""}; ` +
+        `$id = ${String(id ?? -1)}; ` +
+        "$e = @(Get-WinEvent -Path $files -ErrorAction SilentlyContinue); " +
+        "$sel = @(if ($id -ge 0) { $e | Where-Object { $_.Id -eq $id } } else { $e }); " +
         "$groups = @($e | Group-Object Id, ProviderName | Sort-Object Count -Descending | " +
         "Select-Object -First 20 | Select-Object Count, Name); " +
-        "$rows = @($e | Sort-Object TimeCreated -Descending | Select-Object -First " + String(max) + " | " +
+        "$rows = @($sel | Sort-Object TimeCreated -Descending | Select-Object -First " + String(max) + " | " +
         "Select-Object TimeCreated, Id, Level, LevelDisplayName, ProviderName, Message); " +
-        "ConvertTo-Json -Depth 4 -Compress -InputObject @{total=@($e).Count; groups=$groups; rows=$rows}";
+        "ConvertTo-Json -Depth 4 -Compress -InputObject @{total=@($e).Count; matched=@($sel).Count; groups=$groups; rows=$rows}";
 
       const res = await runPowerShell<string>(script, { json: false, timeoutMs: 120_000 });
       if (!res.ok) {
@@ -293,7 +299,7 @@ export const learningsTools: ToolDefinition[] = [
         return fail(`EVTX file not found: ${raw.slice(8)}`);
       }
       try {
-        const d = JSON.parse(raw) as { total: number; groups: unknown; rows: unknown };
+        const d = JSON.parse(raw) as { total: number; matched: number; groups: unknown; rows: unknown };
         const groups = asArray<Record<string, unknown>>(d.groups as never).map((g) => ({
           count: Number(g.Count ?? 0),
           group: String(g.Name ?? ""),
@@ -305,9 +311,13 @@ export const learningsTools: ToolDefinition[] = [
           provider: String(r.ProviderName ?? ""),
           message: String(r.Message ?? "").replace(/\s+/g, " ").slice(0, 300),
         }));
+        const total = Number(d.total ?? 0);
+        const matched = Number(d.matched ?? total);
         return ok(
-          { files, total_events: Number(d.total ?? 0), groups, events: rows },
-          `${String(d.total ?? 0)} event(s) in ${String(files.length)} file(s)`,
+          { files, total_events: total, ...(id !== undefined ? { matched_events: matched } : {}), groups, events: rows },
+          id === undefined
+            ? `${String(total)} event(s) in ${String(files.length)} file(s)`
+            : `${String(matched)} of ${String(total)} event(s) have id ${String(id)}`,
         );
       } catch {
         return text(raw);
