@@ -1,7 +1,7 @@
 ---
 name: windows-triage
 description: Diagnose a Windows machine that crashed, froze, rebooted itself, or is behaving strangely by reading the local event logs and system health through the winadmin-mcp tools. Use when the user says the system crashed or blue-screened, "ist abgestürzt", restarted on its own, a service died, or asks what caused a Windows outage or why the machine is slow.
-version: 0.2.0
+version: 0.3.0
 platforms: [windows]
 metadata:
   hermes:
@@ -28,8 +28,8 @@ Arbeite die Schritte in dieser Reihenfolge ab und urteile erst am Ende.
 
 1. **Bezugspunkt.** `system_health` liefert `uptime_hours` und `last_boot`. Damit ist das
    Zeitfenster definiert: Alles, was der User "vorhin" nennt, liegt nach `last_boot`. Der Rest der
-   Ausgabe (CPU-Last, freier Arbeitsspeicher, Datenträger, `error_count_24h`) ist schon der erste
-   Verdacht, ob Ressourcen das Problem sind.
+   Ausgabe (CPU-Last, freier Arbeitsspeicher, Datenträger, `errors_last_24h`, `logged_in_users`) ist
+   schon der erste Verdacht, ob Ressourcen das Problem sind.
 2. **Fundstelle.** `query_events` mit `log: "System"`, `level: "error"`,
    `hours` gerade groß genug für das Ereignis, `max_events: 50`. Nur wenn das leer ist, auf
    `hours: 24` erweitern.
@@ -92,8 +92,6 @@ zählt nur, wenn das vorherige nichts gebracht hat:
 
 ## Regeln
 
-## Regeln
-
 - **Nur lesen.** Für diese Triage keine `start_service`-, `stop_service`- oder `kill_process`-
   Aktion auslösen. Wenn eine Aktion sinnvoll ist, dem User vorschlagen statt sie eigenmächtig
   auszuführen.
@@ -114,6 +112,32 @@ zählt nur, wenn das vorherige nichts gebracht hat:
   als "kein Problem".
 - **Ausgaben kürzen.** `max_events` begrenzt die Menge; JSON-Blöcke nicht ungefiltert
   wiedergeben, sondern die drei bis fünf relevanten Einträge hervorheben.
+
+## Grenzen der Werkzeuge
+
+Die Antworten sind seit v0.5.2 bis v0.5.4 unabhängig von der Windows-Sprache. Was trotzdem
+überbleibt, ist Sache des Systems, nicht des Servers — lieber kennen als falsch deuten:
+
+- **Level ist immer englisch.** `level` kommt als `critical`/`error`/`warning`/`info` heraus, die
+  lokale Übersetzung liegt in `level_display` (`query_events`). Auf Deutsch heißt eine Warnung
+  eben „Warnung" — danach filtern, nicht gegen `level`.
+- **Zeiten sind ISO-8601 (UTC).** Überall; ein `/Date(…)/` taucht nicht mehr auf.
+- **`task_history` braucht den Operational-Log.** `Microsoft-Windows-TaskScheduler/Operational` ist
+  ab Windows 8 zwar vorhanden, aber oft deaktiviert. Leere Antwort plus deaktivierter Log ist kein
+  Parserfehler; `list_tasks` und `get_task` funktionieren davon unabhängig.
+- **`get_minifilters` braucht Elevierung.** Ohne Rechte antwortet es mit dem rohen
+  Zugriff-verweigert-Text und leerer Liste. Die Tabelle selbst wird über die Zahlspalten gelesen,
+  also unabhängig von der Header-Sprache.
+- **`list_drivers` liest die VersionInfo der `.sys`.** Der `creator` kommt aus der Datei auf dem
+  Datenträger, weil `Win32_SystemDriver` den Hersteller leer lässt. Kostet etwa eine Sekunde für
+  alle Treiber; eine nicht lesbare Datei ergibt einen leeren `creator`, keinen Fehler.
+- **`get_windows_update` antwortet aus dem Update-Client-Log.** Der Registry-Schlüssel
+  `Auto Update\Results` fehlt auf neueren Windows; Dienstate, anstehender Neustart und die
+  Ereignis-IDs 19/20/24/25/43 sind die belastbare Quelle.
+- **Nach einem Server-Neustart ist der Katalog beim Agenten neu.** Der Server schickt
+  `tools/list_changed`, aber ob der Client ihn übernimmt, entscheidet er selbst — bei Hermes erst
+  ein `manage_connections enable` (Hermes-seitig) bringt die Tools zurück. Wenn also *alle* Tools
+  fehlen, war gerade ein Neustart im Spiel, nicht der Ausschalter im Web-Interface.
 
 ## Beispiel
 

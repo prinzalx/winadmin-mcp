@@ -5,6 +5,11 @@ there as `mcp_winadmin_*`, and Hermes picks up changes to the tool list live —
 switches take effect without restarting the agent. Only *enabled* tools appear, so on a fresh
 install Hermes sees the two governance tools until you switch things on.
 
+A **server** restart is a different matter: the server tells the client that its list changed, but
+what the client then does with that is up to it. In Hermes a connection that has to be re-enabled
+with `manage_connections enable` comes back with its tools then, so if *every* tool suddenly is
+unknown, look for a restart rather than for a switched-off row in the web interface.
+
 ```yaml
 # ~/.hermes/config.yaml
 mcp_servers:

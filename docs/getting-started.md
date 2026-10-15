@@ -44,7 +44,7 @@ The terminal answers with a banner and a few lines about where the server lives:
 ╚███╔███╔╝██║██║ ╚████║██║  ██║██████╔╝██║ ╚═╝ ██║██║██║ ╚████║  ██║ ╚═╝ ██║╚██████╗██║
  ╚══╝╚══╝ ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═══╝  ╚═╝     ╚═╝ ╚═════╝╚═╝
 
-  version         v0.5.0
+  version         v0.5.4
   web interface   http://127.0.0.1:8787
   MCP transport   stdio — this terminal stays attached to the agent
 ```
