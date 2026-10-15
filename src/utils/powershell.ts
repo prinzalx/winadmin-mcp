@@ -128,6 +128,20 @@ export async function runPowerShell<T = unknown>(
     const stderr = err.stderr ?? "";
     const timedOut = Boolean(err.killed) || err.code === "ETIMEDOUT";
 
+    // A cmdlet whose errors were suppressed still leaves `$?` false, which makes powershell.exe
+    // exit with code 1 even though the query simply came back empty. Empty output and empty
+    // stderr is therefore the "no rows" case, not a failure.
+    if (!timedOut && stderr.trim() === "" && stdout.trim() === "") {
+      return {
+        ok: true,
+        data: null,
+        exitCode: typeof err.code === "number" ? err.code : null,
+        stdout: "",
+        stderr,
+        durationMs: Date.now() - startedAt,
+      };
+    }
+
     let message: string;
     if (timedOut) {
       message = `PowerShell timed out after ${timeoutMs} ms`;

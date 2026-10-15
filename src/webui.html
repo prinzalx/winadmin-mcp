@@ -84,6 +84,20 @@
   }
   .master input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
   .h2-actions { margin-left: auto; display: inline-flex; gap: 14px; align-items: center; }
+  /* Browser-style tabs: one per module, so a page never holds eighty tools. */
+  .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }
+  .tab {
+    background: none; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0;
+    padding: 6px 11px 7px; font: inherit; font-size: 12px; color: var(--muted); cursor: pointer;
+    display: inline-flex; align-items: center; gap: 7px;
+  }
+  .tab:hover { color: var(--fg); }
+  .tab.active {
+    color: var(--fg); background: #16181d; border-color: var(--line);
+    box-shadow: inset 0 2px 0 var(--accent);
+  }
+  .tab .count { font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 0 5px; }
+  .tab.active .count { color: var(--green); border-color: #2c4634; }
   .group { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 12px; }
   .group:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
   .group-name {
@@ -122,6 +136,14 @@
     text-transform: none;
     color: var(--muted);
   }
+  /* The mini documentation shown when the pointer rests on a tool. */
+  #docs-pop {
+    position: fixed; z-index: 10; max-width: 460px; display: none;
+    background: #101216; border: 1px solid var(--accent); border-radius: 10px;
+    padding: 10px 12px; box-shadow: 0 6px 20px #000a; pointer-events: none;
+  }
+  #docs-pop b { display: block; font-family: Consolas, monospace; font-size: 12px; margin-bottom: 4px; }
+  #docs-pop p { margin: 0; white-space: pre-line; font-size: 12px; color: var(--muted); line-height: 1.45; }
   .badge { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; padding: 1px 6px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
   .badge.write { color: var(--amber); border-color: #4a3d1d; }
   .badge.off { color: var(--red); }
@@ -180,8 +202,11 @@
       <div class="body">
         <div class="legend">
           <b>Visible</b> decides whether MCP clients see the tool at all. <b>Approval</b> decides
-          whether a call runs at once or parks here with a <code>confirmation_id</code>.
+          whether a call runs at once or parks here with a <code>confirmation_id</code>. Rest the
+          pointer on a tool for its documentation.
         </div>
+        <div class="hint" id="module-doc" style="margin:-6px 0 12px"></div>
+        <div class="tabs" id="tabs"></div>
         <div id="tools"></div>
       </div>
     </section>
@@ -217,6 +242,7 @@
     </section>
   </div>
 </main>
+<div id="docs-pop"><b></b><p></p></div>
 <footer>
   <span id="version"></span>
 </footer>
@@ -229,17 +255,37 @@ const api = async (path, init) => {
 
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+/** Which module the tool list shows. Tool counts per module make a single page unreadable. */
+let activeTab = null;
+
+function moduleList(state) {
+  return [...new Set(state.tools.map((t) => t.module))];
+}
+
+function renderTabs(state) {
+  const modules = moduleList(state);
+  if (!activeTab || !modules.includes(activeTab)) activeTab = modules[0];
+
+  document.getElementById("tabs").innerHTML = modules.map((mod) => {
+    const list = state.tools.filter((t) => t.module === mod);
+    const on = list.filter((t) => t.enabled).length;
+    return `<button class="tab ${mod === activeTab ? "active" : ""}" data-tab="${esc(mod)}" title="${esc(state.module_docs[mod] || "")}">${esc(mod)}<span class="count">${String(on)}/${String(list.length)}</span></button>`;
+  }).join("");
+
+  document.getElementById("module-doc").textContent = state.module_docs[activeTab] || "";
+}
+
 function renderTools(state) {
-  const groups = {};
-  for (const t of state.tools) (groups[t.module] ??= []).push(t);
+  renderTabs(state);
+  const tools = state.tools.filter((t) => t.module === activeTab);
 
   document.getElementById("tools").innerHTML = `
     <div class="tool tool-head">
       <span></span><span></span>
       <span class="col" title="Off: hidden from tools/list, and a call anyway is rejected">visible<small>in tools/list</small></span>
       <span class="col" title="On: the call parks until you run it here or call confirm_action">approval<small>waits for you</small></span>
-    </div>` + Object.entries(groups).map(([mod, tools]) => {
-    const on = (kind) => tools.filter((t) => t[kind]).length;
+    </div>` + Object.entries([[activeTab, tools]]).map(([mod, group]) => {
+    const on = (kind) => group.filter((t) => t[kind]).length;
     return `
     <div class="group">
       <div class="group-name"><span>${esc(mod)}</span>
@@ -251,8 +297,8 @@ function renderTools(state) {
           <input type="checkbox" data-group="${esc(mod)}" data-kind="approval" ${on("requires_approval") === tools.length ? "checked" : ""}>
         </label>
       </div>
-      ${tools.map((t) => `
-        <div class="tool">
+      ${group.map((t) => `
+        <div class="tool" data-docs-tool="${esc(t.name)}">
           <div>
             <div class="name">${esc(t.name)}</div>
             <div class="desc">${esc(t.description)}</div>
@@ -270,6 +316,41 @@ function renderTools(state) {
 
   syncMasters(state);
 }
+
+/** The floating documentation card for the tool the pointer rests on. */
+const pop = document.getElementById("docs-pop");
+
+function showDocs(tool, rect) {
+  pop.querySelector("b").textContent = `${tool.name} — ${tool.title}`;
+  pop.querySelector("p").textContent = tool.docs || tool.description;
+  pop.style.display = "block";
+
+  const width = pop.offsetWidth;
+  let left = rect.right + 12;
+  if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
+  pop.style.left = `${String(left)}px`;
+  pop.style.top = `${String(Math.max(8, Math.min(rect.top, window.innerHeight - pop.offsetHeight - 8)))}px`;
+}
+
+document.getElementById("tools").addEventListener("mouseover", (e) => {
+  const row = e.target.closest?.("[data-docs-tool]");
+  if (row) {
+    const tool = snapshot?.tools.find((t) => t.name === row.dataset.docsTool);
+    if (tool) {
+      showDocs(tool, row.getBoundingClientRect());
+      return;
+    }
+  }
+  // Moving onto the gap between two rows must hide the card, or it would claim the wrong tool.
+  if (!e.relatedTarget?.closest?.("[data-docs-tool]")) pop.style.display = "none";
+});
+
+document.getElementById("tabs").addEventListener("click", (e) => {
+  const tab = e.target.closest?.("[data-tab]");
+  if (!tab || tab.dataset.tab === activeTab) return;
+  activeTab = tab.dataset.tab;
+  renderTools(snapshot);
+});
 
 /** Third state for a master switch: some but not all members are on. */
 function syncMasters(state) {

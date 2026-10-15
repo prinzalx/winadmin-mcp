@@ -1,7 +1,7 @@
 ---
 name: windows-triage
 description: Diagnose a Windows machine that crashed, froze, rebooted itself, or is behaving strangely by reading the local event logs and system health through the winadmin-mcp tools. Use when the user says the system crashed or blue-screened, "ist abgestürzt", restarted on its own, a service died, or asks what caused a Windows outage or why the machine is slow.
-version: 0.1.0
+version: 0.2.0
 platforms: [windows]
 metadata:
   hermes:
@@ -61,11 +61,48 @@ Arbeite die Schritte in dieser Reihenfolge ab und urteile erst am Ende.
 8. **Erst jetzt urteilen.** Ursache, Beweis (Protokoll, Quelle, ID, Zeitstempel) und empfohlene
    Maßnahme — in dieser Reihenfolge.
 
+## Vertiefung
+
+Wenn die Basis-Triage keine Ursache ergibt, nach derselben Logik weiterbohren — jedes Werkzeug
+zählt nur, wenn das vorherige nichts gebracht hat:
+
+- **Vorher gelernt?** `list_learnings` (oder gleich `search_events` mit Worten aus der Meldung)
+  vor jeder eigenen Analyse. Ein Eintrag mit verdict `benign` ist eine fertige Antwort, kein
+  Grund für eine Suche. Steht die Entscheidung fest, mit `add_learning` notieren
+  (`note` in normalem Deutsch/Englisch, `verdict`, `event_id` wenn bekannt).
+- **Hat sich was geändert?** `system_changes` (Standard 7 Tage) listet installierte Hotfixes und
+  Programme — "was ging dem Crash voraus". `error_trends` zeigt pro Provider, ob die Fehler
+  wachsen, schrumpfen oder gleich sind; ein Provider, der nur im aktuellen Fenster auftaucht
+  (`new`), ist meist der interessanteste Fund.
+- ** Läuft alles, was laufen sollte?** `services_watch` liefert die Autostart-Dienste, die nicht
+  laufen. `service_restarts` findet Dienste, die im Fenster mehrfach gestoppt wurden
+  (Crash-Loop).
+- **Neues seit dem letzten Blick?** `events_watch` gibt nur die Events **seit dem letzten Aufruf**
+  zurück (Watermark pro Log und Level). Ideal zum Pollen; `reset: true` vergisst den Watermark.
+- **Geplante Aufgaben.** Wenn ein Wartungsjob nicht lief: `list_tasks` (`name` als
+  Teilzeichenkette), dann `get_task` für Definition/Konto/letztes Ergebnis, `task_history` für
+  die Laufhistorie. Ergebniscode `0` = Erfolg, `0x41303` = läuft noch, `0x41306` = abgebrochen.
+- **Registry-Verdacht.** `read_registry_key` liest Werte samt Typ (Zahlen zusätzlich als Hex).
+  Schreiben (`write_registry_value`) exportiert den Schlüssel vorher als `.reg` — der Pfad der
+  Sicherung steht in der Antwort.
+- **Security-Oberfläche.** `check_elevation` vor jedem Schreibversuch klären (Serverprozess,
+  nicht User). `get_security_events` filtert das Security-Log auf Logon-/Prozess-/Privileg-
+  Ereignisse und erklärt jede ID. `analyze_pe` für eine verdächtige Datei ohne sie auszuführen.
+- **Mailed Logs.** `.evtx` von einem anderen Rechner mit `parse_evtx` lesen, statt zu raten.
+
+## Regeln
+
 ## Regeln
 
 - **Nur lesen.** Für diese Triage keine `start_service`-, `stop_service`- oder `kill_process`-
   Aktion auslösen. Wenn eine Aktion sinnvoll ist, dem User vorschlagen statt sie eigenmächtig
   auszuführen.
+- **Approval-Gate.** Steht ein Tool auf Approval, fragt der Server zuerst im Agenten (Popup in
+  `hermes --tui`), und das Ergebnis kommt im selben Aufruf zurück. Kann der Client kein Popup
+  zeigen, parkt die Aktion mit `confirmation_id` — und dann gilt: **nie die eigene geparkte
+  Aktion selbst bestätigen**, sonst ist das Gate wirkungslos. Lieber dem User sagen, dass die
+  Aktion im Web-Interface auf Run wartet, und jede ungeklärte Park-Runde erhöht nur die Pending-
+  Liste.
 - **Zeitfenster ehrlich halten.** "Vorhin" heißt seit `last_boot`, "heute" heißt seit Mitternacht.
   Das verwendete Fenster in der Antwort nennen, damit der User das Urteil nachprüfen kann.
 - **Nicht über unbekannte IDs spekulieren.** `explain_event_id` antwortet auch für unbekannte IDs

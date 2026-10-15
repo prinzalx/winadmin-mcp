@@ -10,7 +10,7 @@ import { z } from "zod";
 
 import { createAuditLog } from "./audit.js";
 import { ARGS, loadConfig } from "./config.js";
-import { ALL_TOOLS, TOOLS_BY_NAME } from "./modules/index.js";
+import { ALL_TOOLS, MODULE_DOCS, TOOLS_BY_NAME } from "./modules/index.js";
 import { createSafety } from "./safety.js";
 import type { ToolContext, ToolDefinition } from "./types.js";
 import { fail, gated, pending, text } from "./utils/result.js";
@@ -454,9 +454,11 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
         title: t.title,
         description: t.description,
         destructive: t.destructive === true,
+        docs: t.docs ?? "",
         enabled: isEnabled(t.name),
         requires_approval: config.settings.requireApprovalTools[t.name] === true,
       })),
+      module_docs: MODULE_DOCS,
       pending: safety.list(),
       audit: audit.recent(25),
       audit_generation: audit.generation(),
