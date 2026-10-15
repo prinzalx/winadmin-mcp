@@ -14,7 +14,10 @@ const server = spawn(process.execPath, ["dist/index.js"], { stdio: ["pipe", "pip
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const post = (p, b) => fetch(`http://127.0.0.1:8802${p}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(b) }).then((r) => r.json());
 
-await sleep(1500);
+// Wait for the port instead of guessing how long the box needs to bind it.
+for (let i = 0; i < 40; i++) {
+  try { await fetch("http://127.0.0.1:8802/api/state"); break } catch { await sleep(500) }
+}
 await fetch("http://127.0.0.1:8802/api/tools", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ requireApproval: { stop_service: true } }) });
 
 const gated = await post("/api/run", { tool: "stop_service", args: { name: "WSearch" } });

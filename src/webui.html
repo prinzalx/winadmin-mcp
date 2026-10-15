@@ -284,7 +284,7 @@ function renderTools(state) {
       <span></span><span></span>
       <span class="col" title="Off: hidden from tools/list, and a call anyway is rejected">visible<small>in tools/list</small></span>
       <span class="col" title="On: the call parks until you run it here or call confirm_action">approval<small>waits for you</small></span>
-    </div>` + Object.entries([[activeTab, tools]]).map(([mod, group]) => {
+    </div>` + [[activeTab, tools]].map(([mod, group]) => {
     const on = (kind) => group.filter((t) => t[kind]).length;
     return `
     <div class="group">
