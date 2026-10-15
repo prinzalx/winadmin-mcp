@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import type { ToolDefinition } from "../../types.js";
 import { fail, ok, text } from "../../utils/result.js";
-import { asArray, fromPsDate, psQuote, runPowerShell } from "../../utils/powershell.js";
+import { asArray, eventLevel, fromPsDate, psQuote, runPowerShell } from "../../utils/powershell.js";
 
 /** Reads a registry value and returns it as a string, or `null` when it is absent. */
 async function readRegistryValue(key: string, name: string): Promise<string | null> {
@@ -26,8 +26,11 @@ export const diagnosticTools: ToolDefinition[] = [
     handler: async () => {
       const script =
         "$os = Get-CimInstance Win32_OperatingSystem; " +
-        "$cs = Get-CimInstance Win32_ComputerSystem; " +
+
         "$cpu = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average; " +
+        "$users = @(Get-CimInstance Win32_LoggedOnUser -ErrorAction SilentlyContinue | ForEach-Object { " +
+        "if ($_.Antecedent -match 'Name\\s*=\\s*\"([^\"]+)\".*Domain\\s*=\\s*\"([^\"]+)\"') { $Matches[2] + '\\' + $Matches[1] } " +
+        "} | Sort-Object -Unique); " +
         "$errors = (Get-WinEvent -FilterHashtable @{ LogName='System'; Level=2; StartTime=(Get-Date).AddHours(-24) } -ErrorAction SilentlyContinue | Measure-Object).Count; " +
         "$disk = Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=3\" | Select-Object DeviceID, Size, FreeSpace; " +
         "ConvertTo-Json -Depth 3 -Compress -InputObject @{" +
@@ -36,7 +39,7 @@ export const diagnosticTools: ToolDefinition[] = [
         "last_boot=$os.LastBootUpTime; cpu_load_pct=$cpu;" +
         "total_gb=[math]::Round($os.TotalVisibleMemorySize/1MB,1);" +
         "free_gb=[math]::Round($os.FreePhysicalMemory/1MB,1);" +
-        "users=$cs.NumberOfUsers; disks=$disk; error_count_24h=$errors}";
+        "users=$users; disks=$disk; error_count_24h=$errors}";
 
       const res = await runPowerShell<string>(script, { json: false, timeoutMs: 45_000 });
       if (!res.ok) {
@@ -54,7 +57,7 @@ export const diagnosticTools: ToolDefinition[] = [
           cpu_load_pct: number | null;
           total_gb: number;
           free_gb: number;
-          users: number;
+          users: string[] | string;
           disks: Array<{ DeviceID: string; Size: number; FreeSpace: number }>;
           error_count_24h: number;
         };
@@ -79,7 +82,7 @@ export const diagnosticTools: ToolDefinition[] = [
           last_boot: fromPsDate(d.last_boot) ?? d.last_boot,
           cpu_load_pct: d.cpu_load_pct,
           memory: { total_gb: d.total_gb, free_gb: d.free_gb, used_pct: usedPct },
-          logged_in_users: d.users,
+          logged_in_users: asArray(d.users as never as string[]),
           drives: drives.map((x) => ({
             drive: String(x.DeviceID ?? ""),
             total_gb: Number((Number(x.Size) / 1024 ** 3).toFixed(0)),
@@ -111,7 +114,7 @@ export const diagnosticTools: ToolDefinition[] = [
         "$deps = @(Get-CimInstance Win32_DependentService -Filter \"Antecedent=$($svc.Path)\" -ErrorAction SilentlyContinue); " +
         "$logs = @(Get-WinEvent -FilterHashtable @{ LogName='System'; StartTime=(Get-Date).AddDays(-2) } -ErrorAction SilentlyContinue | " +
         `Where-Object { $_.Message -like ('*' + $svc.Name + '*') -or $_.ProviderName -like ('*' + $svc.Name + '*') } | ` +
-        "Select-Object -First 10 | Select-Object TimeCreated, Id, LevelDisplayName, Message); " +
+        "Select-Object -First 10 | Select-Object TimeCreated, Id, Level, LevelDisplayName, Message); " +
         "ConvertTo-Json -Depth 4 -Compress -InputObject @{name=$svc.Name; display=$svc.DisplayName; status=$svc.State;" +
         "startmode=$svc.StartMode; account=$svc.StartName; pid=$svc.ProcessId; deps=$deps; logs=$logs}";
 
@@ -134,7 +137,7 @@ export const diagnosticTools: ToolDefinition[] = [
           account: string;
           pid: number;
           deps: Array<{ Name: string; State: string }>;
-          logs: Array<{ TimeCreated: string; Id: number; LevelDisplayName: string; Message: string }>;
+          logs: Array<{ TimeCreated: string; Id: number; Level: number; LevelDisplayName: string; Message: string }>;
         };
 
         const problems: string[] = [];
@@ -152,10 +155,12 @@ export const diagnosticTools: ToolDefinition[] = [
         const logs = asArray(d.logs as never as Array<{
           TimeCreated: string;
           Id: number;
+          Level: number;
           LevelDisplayName: string;
           Message: string;
         }>);
-        const errors = logs.filter((l) => /error|critical/i.test(l.LevelDisplayName));
+        // Comparing the numeric level rather than LevelDisplayName, which is localized.
+        const errors = logs.filter((l) => ["critical", "error"].includes(eventLevel(l.Level, l.LevelDisplayName)));
         if (errors.length > 0) {
           problems.push(`${String(errors.length)} error entry(ies) in the System log in the last 2 days`);
         }
@@ -169,9 +174,9 @@ export const diagnosticTools: ToolDefinition[] = [
           pid: d.pid || null,
           dependents: deps.map((x) => ({ name: String(x.Name ?? ""), status: String(x.State ?? "") })),
           recent_log: logs.slice(0, 5).map((l) => ({
-            time: l.TimeCreated,
+            time: fromPsDate(l.TimeCreated) ?? l.TimeCreated,
             id: l.Id,
-            level: l.LevelDisplayName,
+            level: eventLevel(l.Level, l.LevelDisplayName),
             message: String(l.Message ?? "").replace(/\s+/g, " ").slice(0, 240),
           })),
           assessment: problems.length > 0 ? problems : ["No problems detected"],
@@ -186,7 +191,8 @@ export const diagnosticTools: ToolDefinition[] = [
     module: "diagnostics",
     title: "Windows Update state",
     description:
-      "Read the Windows Update state from the registry plus the most recent install results. Read-only.",
+      "Windows Update state: registry timestamps, the update services, a pending reboot and the newest entries " +
+      "of the update client log. Read-only.",
     input: z.object({
       count: z.number().int().positive().max(20).optional().describe("How many recent history entries to return. Defaults to 5"),
     }),
@@ -196,22 +202,67 @@ export const diagnosticTools: ToolDefinition[] = [
       const resultsKey =
         "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\Results";
 
+      const script =
+        "$au = 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update'; " +
+        "$svc = @(Get-CimInstance Win32_Service -Filter \"Name='wuauserv' OR Name='UsoSvc'\" -ErrorAction SilentlyContinue); " +
+        "$reboot = ((Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending') -or " +
+        "(Test-Path ($au + '\\RebootRequired'))); " +
+        "$log = 'Microsoft-Windows-WindowsUpdateClient/Operational'; " +
+        "$e = @(Get-WinEvent -FilterHashtable @{ LogName=$log; ID=@(19, 20, 24, 25, 43); " +
+        "StartTime=(Get-Date).AddDays(-30) } -MaxEvents " + String(count) + " -ErrorAction SilentlyContinue); " +
+        "ConvertTo-Json -Depth 3 -Compress -InputObject @{" +
+        "installed=(Get-ItemProperty ($au + '\\Results') -ErrorAction SilentlyContinue).LastInstallationSuccessTime; " +
+        "searched=(Get-ItemProperty $au -ErrorAction SilentlyContinue).LastSuccessTime; " +
+        "services=$svc; reboot_pending=$reboot; events=$e}";
+
+      const res = await runPowerShell<string>(script, { json: false, timeoutMs: 45_000 });
+      if (!res.ok) {
+        return fail(`get_windows_update failed: ${res.error ?? "unknown error"}`);
+      }
+
       const [installed, searched] = await Promise.all([
         readRegistryValue(resultsKey, "LastInstallationSuccessTime"),
         readRegistryValue(resultsKey, "LastSearchSuccessTime"),
       ]);
 
-      return ok(
-        {
-          last_installation_success: installed ?? "unknown",
-          last_search_success: searched ?? "unknown",
+      try {
+        const d = JSON.parse(res.stdout.trim() === "" ? "{}" : res.stdout.trim()) as {
+          installed?: string;
+          searched?: string;
+          services?: Array<{ Name: string; State: string; StartMode: string }>;
+          reboot_pending?: boolean;
+          events?: Array<{ TimeCreated: string; Id: number; Message: string }>;
+        };
+        const services = asArray(d.services as never as Array<{ Name: string; State: string; StartMode: string }>);
+        const events = asArray(d.events as never as Array<{ TimeCreated: string; Id: number; Message: string }>).map(
+          (e) => ({
+            time: fromPsDate(e.TimeCreated) ?? String(e.TimeCreated ?? ""),
+            id: Number(e.Id ?? 0),
+            message: String(e.Message ?? "").replace(/\s+/g, " ").slice(0, 240),
+          }),
+        );
+        const wuauserv = services.find((s) => s.Name === "wuauserv");
+        const newest = events[0];
+
+        return ok({
+          last_installation_success: fromPsDate(d.installed) ?? d.installed ?? installed ?? null,
+          last_search_success: fromPsDate(d.searched) ?? d.searched ?? searched ?? null,
+          update_service: wuauserv ? `${wuauserv.Name}: ${wuauserv.State} (${wuauserv.StartMode})` : null,
+          reboot_pending: d.reboot_pending === true,
+          recent_events: events,
           note:
-            "The full update history needs the Windows Update COM API; this tool reports the registry state.",
+            "The full update history needs the Windows Update COM API; this reports the registry state, the " +
+            "service state and the update client log.",
         },
-        installed
-          ? `Last successful update install: ${installed}`
-          : "No Windows Update result found in the registry",
-      );
+          newest
+            ? `${String(services.length)} update service(s), newest log entry ${newest.time}: ${newest.message.slice(0, 80)}`
+            : d.reboot_pending === true
+              ? "Reboot pending, no Windows Update log entries in the last 30 days"
+              : "No Windows Update log entries in the last 30 days",
+        );
+      } catch {
+        return text(res.stdout.trim());
+      }
     },
   },
 ];

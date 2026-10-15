@@ -191,8 +191,9 @@ export const processTools: ToolDefinition[] = [
       const port = args.port as number | undefined;
 
       if (port !== undefined) {
+        const source = protocol === "TCP" ? "Get-NetTCPConnection -State Listen" : "Get-NetUDPEndpoint";
         const script =
-          `Get-NetTCPConnection -LocalPort ${String(port)} -State Listen -ErrorAction SilentlyContinue | ` +
+          `${source} -LocalPort ${String(port)} -ErrorAction SilentlyContinue | ` +
           "Select-Object LocalAddress, LocalPort, OwningProcess | ConvertTo-Json -Compress";
         const res = await runPowerShell<string>(script, { json: false });
         if (!res.ok) {
@@ -205,9 +206,13 @@ export const processTools: ToolDefinition[] = [
         return text(`Port ${String(port)} is listening`, { port, listening: true, raw });
       }
 
+      // The NetTCPIP cmdlets are not named symmetrically: listening TCP comes from
+      // Get-NetTCPConnection, while UDP has no connection object at all and is listed through its
+      // endpoints. Building the name from the protocol argument produced "Get-TCPConnection".
+      const source = protocol === "TCP" ? "Get-NetTCPConnection -State Listen" : "Get-NetUDPEndpoint";
       const script =
-        `Get-${protocol}Connection${protocol === "TCP" ? " -State Listen" : ""} | ` +
-        "Group-Object LocalPort | Sort-Object Name | " +
+        `${source} -ErrorAction SilentlyContinue | ` +
+        "Group-Object LocalPort | Sort-Object { [int]$_.Name } | " +
         "Select-Object Count, Name | ConvertTo-Json -Compress";
       const res = await runPowerShell<string>(script, { json: false, timeoutMs: 45_000 });
       if (!res.ok) {

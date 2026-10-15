@@ -2,7 +2,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import type { ToolDefinition } from "../../types.js";
-import { asArray, fromPsDate, psQuote, runPowerShell } from "../../utils/powershell.js";
+import { asArray, eventLevel, fromPsDate, psQuote, runPowerShell } from "../../utils/powershell.js";
 import { fail, ok, text } from "../../utils/result.js";
 
 /** The log the Task Scheduler writes its run history to. Enabled by default since Windows 8. */
@@ -276,7 +276,7 @@ export const schedulerTools: ToolDefinition[] = [
         `Where-Object { ($_.Properties | Where-Object { ([string]$_.Value).TrimEnd('\') -like ('*' + $name) }) -or ` +
         `($_.Message -like ('*' + $name + '*')) } | ` +
         `Select-Object -First ${String(max)} | ` +
-        "Select-Object TimeCreated, Id, LevelDisplayName, Message | ConvertTo-Json -Depth 3 -Compress";
+        "Select-Object TimeCreated, Id, Level, LevelDisplayName, Message | ConvertTo-Json -Depth 3 -Compress";
 
       const res = await runPowerShell<string>(script, { json: false, timeoutMs: 90_000 });
       if (!res.ok) {
@@ -291,7 +291,7 @@ export const schedulerTools: ToolDefinition[] = [
         const entries = rows.map((e) => ({
           time: fromPsDate(e.TimeCreated) ?? String(e.TimeCreated ?? ""),
           id: Number(e.Id ?? 0),
-          level: String(e.LevelDisplayName ?? ""),
+          level: eventLevel(e.Level, e.LevelDisplayName),
           message: String(e.Message ?? "").replace(/\s+/g, " ").slice(0, 240),
         }));
         return ok({ count: entries.length, entries }, `${String(entries.length)} task history entry(ies)`);

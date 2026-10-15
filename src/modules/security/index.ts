@@ -4,7 +4,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import type { ToolDefinition } from "../../types.js";
-import { asArray, fromPsDate, psQuote, runPowerShell } from "../../utils/powershell.js";
+import { asArray, eventLevel, fromPsDate, psQuote, runPowerShell } from "../../utils/powershell.js";
 import { fail, ok, text } from "../../utils/result.js";
 
 /** The security-log ids this server knows how to name, mapped to what they mean. */
@@ -142,7 +142,7 @@ export const securityTools: ToolDefinition[] = [
       const script =
         `Get-WinEvent -FilterHashtable @{ LogName='Security'; ID=@(${ids.join(", ")}); ` +
         `StartTime=(Get-Date).AddHours(-${String(hours)}) } -MaxEvents ${String(max)} -ErrorAction SilentlyContinue | ` +
-        "Select-Object TimeCreated, Id, LevelDisplayName, ProviderName, Message | ConvertTo-Json -Depth 3 -Compress";
+        "Select-Object TimeCreated, Id, Level, LevelDisplayName, ProviderName, Message | ConvertTo-Json -Depth 3 -Compress";
 
       const res = await runPowerShell<string>(script, { json: false, timeoutMs: 90_000 });
       if (!res.ok) {
@@ -164,7 +164,7 @@ export const securityTools: ToolDefinition[] = [
             time: fromPsDate(e.TimeCreated) ?? String(e.TimeCreated ?? ""),
             id,
             meaning: SECURITY_IDS[id] ?? "security event",
-            level: String(e.LevelDisplayName ?? ""),
+            level: eventLevel(e.Level, e.LevelDisplayName),
             provider: String(e.ProviderName ?? ""),
             message: String(e.Message ?? "").replace(/\s+/g, " ").slice(0, 300),
           };
@@ -191,8 +191,9 @@ export const securityTools: ToolDefinition[] = [
       "disk tools all live here.\n" +
       "A running driver whose binary is missing from disk is the interesting case; the path column is empty then, " +
       "and a follow-up call can look at what is left on disk.\n" +
-      "Reading driver info works unprivileged. Sorting by creator is a good first filter, because the vendor name " +
-      "separates Microsoft drivers from third-party ones.",
+      "The creator is read from the file version info of the .sys on disk, because Win32_SystemDriver leaves its " +
+      "Manufacturer property empty on recent Windows builds. Reading driver info works unprivileged; a binary that " +
+      "cannot be opened simply reports an empty creator.",
     input: z.object({
       name: z.string().optional().describe("Substring match on the driver name"),
       state: z.enum(["Running", "Stopped", "Start pending", "Stop pending"]).optional().describe("Exact state filter"),
@@ -204,13 +205,19 @@ export const securityTools: ToolDefinition[] = [
       const conditions: string[] = [];
       if (args.name) conditions.push(`$_.Name -like ${psQuote(`*${String(args.name)}*`)}`);
       if (args.state) conditions.push(`$_.State -eq ${psQuote(String(args.state))}`);
-      if (args.third_party_only) conditions.push(`$_.Manufacturer -notlike ${psQuote("*Microsoft*")}`);
+      if (args.third_party_only) conditions.push(`$_.Company -notlike ${psQuote("*Microsoft*")}`);
 
       const script =
-        "Get-CimInstance Win32_SystemDriver -ErrorAction SilentlyContinue" +
+        "$rows = @(foreach ($d in Get-CimInstance Win32_SystemDriver -ErrorAction SilentlyContinue) { " +
+        "$p = if ($d.PathName) { [Environment]::ExpandEnvironmentVariables($d.PathName) } else { '' }; " +
+        "$company = ''; " +
+        "if ($p -and (Test-Path -LiteralPath $p -ErrorAction SilentlyContinue)) { " +
+        "$company = [string](Get-Item -LiteralPath $p -ErrorAction SilentlyContinue).VersionInfo.CompanyName }; " +
+        "$out = $d | Select-Object Name, DisplayName, State, StartMode, PathName; " +
+        "$out | Add-Member -NotePropertyName Company -NotePropertyValue $company -Force; $out }); " +
+        "$rows" +
         (conditions.length > 0 ? ` | Where-Object { ${conditions.join(" -and ")} }` : "") +
         ` | Select-Object -First ${String(max)} | ` +
-        "Select-Object Name, DisplayName, State, StartMode, PathName, Manufacturer, SystemCreationClassName | " +
         "ConvertTo-Json -Depth 3 -Compress";
 
       const res = await runPowerShell<string>(script, { json: false, timeoutMs: 90_000 });
@@ -229,7 +236,7 @@ export const securityTools: ToolDefinition[] = [
           state: String(d.State ?? ""),
           start_mode: String(d.StartMode ?? ""),
           path: String(d.PathName ?? ""),
-          creator: String(d.Manufacturer ?? ""),
+          creator: String(d.Company ?? ""),
         }));
         const running = drivers.filter((d) => d.state === "Running").length;
         return ok(

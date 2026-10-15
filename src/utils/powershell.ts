@@ -186,6 +186,27 @@ export function fromPsDate(value: unknown): string | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
+/**
+ * Maps the numeric `Level` of an event record to a stable english name.
+ *
+ * `LevelDisplayName` is localized ("Warnung" on a German system), so tools that let the caller
+ * filter or compare severities cannot rely on it. The number is the same on every locale.
+ */
+export function eventLevel(level: unknown, displayName?: unknown): string {
+  const named: Record<number, string> = {
+    1: "critical",
+    2: "error",
+    3: "warning",
+    4: "info",
+    5: "verbose",
+  };
+  const n = Number(level);
+  if (named[n]) {
+    return named[n];
+  }
+  return String(displayName ?? "").toLowerCase() || "unknown";
+}
+
 /** Normalises `ConvertTo-Json` output, which is a bare object for single results. */
 export function asArray<T>(data: T | T[] | null | undefined): T[] {
   if (data === null || data === undefined) {

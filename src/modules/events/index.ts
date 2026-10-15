@@ -3,12 +3,13 @@ import { z } from "zod";
 
 import type { ToolDefinition } from "../../types.js";
 import { explainEventId } from "../../data/event-ids.js";
-import { asArray, psQuote, runPowerShell } from "../../utils/powershell.js";
+import { asArray, eventLevel, fromPsDate, psQuote, runPowerShell } from "../../utils/powershell.js";
 import { fail, ok, text } from "../../utils/result.js";
 
 interface EventRow {
   TimeCreated: string;
   Id: number;
+  Level: number;
   LevelDisplayName: string;
   Provider: string;
   Message: string;
@@ -61,7 +62,7 @@ async function readEvents(
 ): Promise<{ rows: EventRow[]; error?: string }> {
   const script =
     `Get-WinEvent -FilterHashtable ${filter} -MaxEvents ${String(max)} -ErrorAction SilentlyContinue | ` +
-    "Select-Object TimeCreated, Id, LevelDisplayName, ProviderName, Message | ConvertTo-Json -Depth 3 -Compress";
+    "Select-Object TimeCreated, Id, Level, LevelDisplayName, ProviderName, Message | ConvertTo-Json -Depth 3 -Compress";
 
   const res = await runPowerShell<string>(script, { json: false, timeoutMs: 60_000 });
   if (!res.ok) {
@@ -82,6 +83,7 @@ async function readEvents(
         return {
           TimeCreated: String(e.TimeCreated ?? ""),
           Id: Number(e.Id ?? 0),
+          Level: Number(e.Level ?? 0),
           LevelDisplayName: String(e.LevelDisplayName ?? ""),
           Provider: String(e.ProviderName ?? ""),
           Message: String(e.Message ?? "").replace(/\s+/g, " ").trim(),
@@ -95,9 +97,10 @@ async function readEvents(
 
 function shape(row: EventRow) {
   return {
-    time: row.TimeCreated,
+    time: fromPsDate(row.TimeCreated) ?? row.TimeCreated,
     id: row.Id,
-    level: row.LevelDisplayName,
+    level: eventLevel(row.Level, row.LevelDisplayName),
+    level_display: row.LevelDisplayName,
     provider: row.Provider,
     message: row.Message.length > 400 ? `${row.Message.slice(0, 400)}...` : row.Message,
   };

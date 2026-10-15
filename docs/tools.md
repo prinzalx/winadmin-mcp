@@ -36,7 +36,7 @@ texts in full.
 
 | Tool | Input | Response |
 |---|---|---|
-| `query_events` | `log?` = `System` (default) \| `Application` \| `Security` \| `Setup`, `level?` (`critical`…`info`), `hours?` (default 24), `event_id?`, `source?`, `max_events?` (default 50, max 1000) | newest first, each entry with time, ID, level, provider and message (truncated to 400 characters) |
+| `query_events` | `log?` = `System` (default) \| `Application` \| `Security` \| `Setup`, `level?` (`critical`…`info`), `hours?` (default 24), `event_id?`, `source?`, `max_events?` (default 50, max 1000) | newest first, each entry with time, ID, level, provider and message (truncated to 400 characters). `level` is always english, `level_display` carries the localized text of the system |
 | `summary_events` | `log?`, `hours?` | error and warning counts per provider — the fastest route to the culprit |
 | `explain_event_id` | `event_id`, `log?` (wording only) | meaning, severity, typical cause. **No process start**: pure lookup in `src/data/event-ids.ts` |
 
@@ -47,7 +47,7 @@ texts in full.
 | `list_processes` | `name?` (substring), `top?` (default 20, max 200), `sort?` = `cpu` \| `memory` (default) \| `name` | top processes with memory and command line |
 | `get_process` | `name` (exact, without `.exe`), `max_instances?` (max 100) | details for all instances of the name |
 | `kill_process` | `name` (with or without `.exe`), `confirmation_id?` | kills **all** instances; *destructive* |
-| `check_ports` | `port?`, `protocol?` = `TCP` \| `UDP` | without `port`: all ports with connection counts; with `port`: whether it is listening or not, plus owning process |
+| `check_ports` | `port?`, `protocol?` = `TCP` \| `UDP` | without `port`: all listening TCP ports (UDP: all endpoints) with connection counts; with `port`: whether it is listening or not, plus owning process |
 
 `kill_process` spares the protected system processes; an attempt on `lsass`, `csrss`, `svchost`,
 `winlogon`, `smss` or `services` is rejected instead of destabilizing the machine.
@@ -65,9 +65,9 @@ texts in full.
 
 | Tool | Input | Response |
 |---|---|---|
-| `system_health` | – | computer name, OS and build, uptime, last boot, CPU load, memory, drives, error count of the last 24 h |
+| `system_health` | – | computer name, OS and build, uptime, last boot, CPU load, memory, the accounts with a logon session, drives, error count of the last 24 h |
 | `diagnose_service` | `name` (exact) | state, start mode, process, dependencies and the recent log entries that mention the service |
-| `get_windows_update` | `count?` (default 5, max 20) | update state from the registry plus the newest installation results |
+| `get_windows_update` | `count?` (default 5, max 20) | the last successful install and search from the registry, the state of the update services, whether a reboot is pending, and the newest entries of the Windows Update client log |
 
 ## Scheduler
 
@@ -119,7 +119,7 @@ the filesystem minifilter stack and a static look at an executable.
 |---|---|---|
 | `check_elevation` | – | whether this server process runs elevated, its user, integrity level (from the mandatory-label SID, locale-independent) and the Windows version |
 | `get_security_events` | `event_id?` (defaults to the interesting set), `hours?` (default 24), `max_events?` (default 50) | Security-log entries narrowed to logon, privilege, process-creation and account events, each annotated with what the id means |
-| `list_drivers` | `name?` (substring), `state?`, `third_party_only?`, `max_drivers?` (default 400) | kernel drivers with state, start type, the `.sys` path on disk and its creator |
+| `list_drivers` | `name?` (substring), `state?`, `third_party_only?`, `max_drivers?` (default 400) | kernel drivers with state, start type, the `.sys` path on disk and its creator, which is read from the file version info because `Win32_SystemDriver` reports an empty manufacturer |
 | `get_minifilters` | – | the filesystem minifilter stack in altitude order — who sits on top of the disk and in which order they see I/O |
 | `analyze_pe` | `path` (full path to an `.exe`/`.dll`), `max_apis?` (default 60) | size, architecture, imported DLLs and API functions grouped by category (process, registry, file, network, service, sync, crypto) |
 

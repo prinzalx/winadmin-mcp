@@ -6,7 +6,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import type { ToolDefinition } from "../../types.js";
-import { asArray, fromPsDate, psQuote, runPowerShell } from "../../utils/powershell.js";
+import { asArray, eventLevel, fromPsDate, psQuote, runPowerShell } from "../../utils/powershell.js";
 import { fail, ok, text } from "../../utils/result.js";
 
 type Verdict = "benign" | "known-issue" | "needs-action";
@@ -211,7 +211,7 @@ export const learningsTools: ToolDefinition[] = [
       const script =
         `Get-WinEvent -FilterHashtable @{ LogName=${psQuote(log)}; StartTime=(Get-Date).AddHours(-${String(hours)}) } ` +
         `-MaxEvents 4000 -ErrorAction SilentlyContinue | Where-Object { $_.Message -like ${psQuote(`*${words}*`)} } | ` +
-        `Select-Object -First ${String(max)} | Select-Object TimeCreated, Id, LevelDisplayName, ProviderName, Message | ` +
+        `Select-Object -First ${String(max)} | Select-Object TimeCreated, Id, Level, LevelDisplayName, ProviderName, Message | ` +
         "ConvertTo-Json -Depth 3 -Compress";
 
       const res = await runPowerShell<string>(script, { json: false, timeoutMs: 90_000 });
@@ -238,7 +238,7 @@ export const learningsTools: ToolDefinition[] = [
           return {
             time: fromPsDate(e.TimeCreated) ?? String(e.TimeCreated ?? ""),
             id,
-            level: String(e.LevelDisplayName ?? ""),
+            level: eventLevel(e.Level, e.LevelDisplayName),
             provider,
             message: String(e.Message ?? "").replace(/\s+/g, " ").slice(0, 300),
             learnings: matches.map((m) => ({ id: m.learning.id, verdict: m.learning.verdict, note: m.learning.note })),
@@ -281,7 +281,7 @@ export const learningsTools: ToolDefinition[] = [
         "$groups = @($e | Group-Object Id, ProviderName | Sort-Object Count -Descending | " +
         "Select-Object -First 20 | Select-Object Count, Name); " +
         "$rows = @($e | Sort-Object TimeCreated -Descending | Select-Object -First " + String(max) + " | " +
-        "Select-Object TimeCreated, Id, LevelDisplayName, ProviderName, Message); " +
+        "Select-Object TimeCreated, Id, Level, LevelDisplayName, ProviderName, Message); " +
         "ConvertTo-Json -Depth 4 -Compress -InputObject @{total=@($e).Count; groups=$groups; rows=$rows}";
 
       const res = await runPowerShell<string>(script, { json: false, timeoutMs: 120_000 });
@@ -301,7 +301,7 @@ export const learningsTools: ToolDefinition[] = [
         const rows = asArray<Record<string, unknown>>(d.rows as never).map((r) => ({
           time: fromPsDate(r.TimeCreated) ?? String(r.TimeCreated ?? ""),
           id: Number(r.Id ?? 0),
-          level: String(r.LevelDisplayName ?? ""),
+          level: eventLevel(r.Level, r.LevelDisplayName),
           provider: String(r.ProviderName ?? ""),
           message: String(r.Message ?? "").replace(/\s+/g, " ").slice(0, 300),
         }));

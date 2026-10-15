@@ -2,7 +2,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import type { ToolDefinition } from "../../types.js";
-import { asArray, fromPsDate, psQuote, runPowerShell } from "../../utils/powershell.js";
+import { asArray, eventLevel, fromPsDate, psQuote, runPowerShell } from "../../utils/powershell.js";
 import { fail, ok, text } from "../../utils/result.js";
 
 /**
@@ -56,7 +56,7 @@ export const monitorTools: ToolDefinition[] = [
       const script =
         `Get-WinEvent -FilterHashtable @{ LogName=${psQuote(log)}; Level=${String(levelNumber)}; ` +
         `StartTime=(Get-Date).AddHours(-${String(hours)}) } -MaxEvents 2000 -ErrorAction SilentlyContinue | ` +
-        "Select-Object TimeCreated, Id, LevelDisplayName, ProviderName, Message | " +
+        "Select-Object TimeCreated, Id, Level, LevelDisplayName, ProviderName, Message | " +
         "Sort-Object TimeCreated -Descending | Select-Object -First " + String(max) + " | " +
         "ConvertTo-Json -Depth 3 -Compress";
 
@@ -70,7 +70,7 @@ export const monitorTools: ToolDefinition[] = [
       const shaped = rows.map((e) => ({
         time: fromPsDate(e.TimeCreated) ?? String(e.TimeCreated ?? ""),
         id: Number(e.Id ?? 0),
-        level: String(e.LevelDisplayName ?? ""),
+        level: eventLevel(e.Level, e.LevelDisplayName),
         provider: String(e.ProviderName ?? ""),
         message: String(e.Message ?? "").replace(/\s+/g, " ").slice(0, 240),
       }));
