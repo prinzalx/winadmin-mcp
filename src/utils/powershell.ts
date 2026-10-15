@@ -168,14 +168,21 @@ export async function runPowerShell<T = unknown>(
  * produces for `[datetime]` values into an ISO-8601 string.
  */
 export function fromPsDate(value: unknown): string | null {
-  if (typeof value !== "string" || value === "") {
+  let v = value;
+  if (v !== null && typeof v === "object") {
+    // A CIM DateTime sometimes serializes as `{"value":"/Date(…)/","DateTime":"localized text"}`;
+    // reading it as a string would produce "[object Object]".
+    const o = v as { value?: unknown; DateTime?: unknown };
+    v = o.value ?? o.DateTime ?? null;
+  }
+  if (typeof v !== "string" || v === "") {
     return null;
   }
-  const ms = /^\/Date\((-?\d+)([+-]\d{4})?\)\/$/.exec(value);
+  const ms = /^\/Date\((-?\d+)([+-]\d{4})?\)\/$/.exec(v);
   if (ms) {
     return new Date(Number(ms[1])).toISOString();
   }
-  const parsed = new Date(value);
+  const parsed = new Date(v);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 

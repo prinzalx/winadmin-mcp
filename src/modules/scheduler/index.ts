@@ -251,8 +251,11 @@ export const schedulerTools: ToolDefinition[] = [
       "Reads the Microsoft-Windows-TaskScheduler/Operational log, which holds the run history of every task. " +
       "Event 100 is \"Action started\", 102 is \"Action completed\", 103 reports the result code and 200 is " +
       "\"Action encountered an error\".\n" +
+      "The task is matched on the structured TaskName/TaskPath event properties, so the answer does not depend on " +
+      "the language of the log messages.\n" +
       "The log is size-limited and rolls over, so on a busy machine it goes back only a few days. An empty answer " +
-      "can also mean the operational log is switched off; query_events with that log name tells you which.",
+      "can also mean the operational log is switched off, which is the default unless it was enabled in Event " +
+      "Viewer; query_events with that log name tells you which.",
     input: z.object({
       name: nameField,
       hours: z.number().int().positive().max(720).optional().describe("Look-back window in hours. Defaults to 72"),
@@ -263,10 +266,15 @@ export const schedulerTools: ToolDefinition[] = [
       const hours = Number(args.hours ?? 72);
       const max = Number(args.max_events ?? 30);
 
+      // Matching on $_.Message alone breaks on a localized system, because the task name appears in the
+      // message text only for some event ids. The properties carry it for every event of the provider,
+      // with the trailing backslash that the provider appends, so the wildcard match strips it.
       const script =
+        `$name = ${psQuote(name)}; ` +
         `Get-WinEvent -FilterHashtable @{ LogName=${psQuote(TASK_LOG)}; ` +
         `StartTime=(Get-Date).AddHours(-${String(hours)}) } -MaxEvents ${String(max * 20)} -ErrorAction SilentlyContinue | ` +
-        `Where-Object { $_.Message -like ('*' + ${psQuote(name)} + '*') } | ` +
+        `Where-Object { ($_.Properties | Where-Object { ([string]$_.Value).TrimEnd('\') -like ('*' + $name) }) -or ` +
+        `($_.Message -like ('*' + $name + '*')) } | ` +
         `Select-Object -First ${String(max)} | ` +
         "Select-Object TimeCreated, Id, LevelDisplayName, Message | ConvertTo-Json -Depth 3 -Compress";
 

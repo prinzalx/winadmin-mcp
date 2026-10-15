@@ -270,10 +270,12 @@ export const securityTools: ToolDefinition[] = [
       }
 
       // fltmc filters prints a table whose columns are name, instance count and frame, and whose
-      // rows are only useful once the altitude is added back from the registry.
+      // rows are only useful once the altitude is added back from the registry. The frame column is
+      // printed only for instances that have one, so a data row may carry two or three columns; the
+      // header rows are skipped by the numeric second column.
       const table: Array<{ name: string; instances: number; frame: string }> = [];
       for (const line of raw.split("\n")) {
-        const row = /^(\S+)\s+(\d+)\s+(\d+)$/.exec(line.trim());
+        const row = /^(\S+)\s+(\d+)(?:\s+(\d+))?$/.exec(line.trim());
         if (row) {
           table.push({ name: row[1] ?? "", instances: Number(row[2] ?? 0), frame: row[3] ?? "" });
         }

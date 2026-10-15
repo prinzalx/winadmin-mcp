@@ -14,8 +14,12 @@ const watermarks = new Map<string, string>();
 
 const SCM_LOG = "System";
 
-/** Providers whose name makes a restart/crash statement, kept out of the noise. */
-const SCM_STOP_IDS = [7031, 7032, 7034, 7036, 7040, 7043];
+/**
+ * Service Control Manager ids that make a restart/crash statement. 7040 is deliberately not in the
+ * list: it reports a start-type change, not a state transition, and counting it made every service
+ * that merely got its start type tweaked look like it had restarted.
+ */
+const SCM_STOP_IDS = [7031, 7032, 7034, 7036, 7043];
 
 export const monitorTools: ToolDefinition[] = [
   {
@@ -247,7 +251,10 @@ export const monitorTools: ToolDefinition[] = [
         `Get-WinEvent -FilterHashtable @{ LogName=${psQuote(SCM_LOG)}; ProviderName='Service Control Manager'; ` +
         `ID=@(${SCM_STOP_IDS.join(", ")}); StartTime=(Get-Date).AddHours(-${String(hours)}) } ` +
         `-MaxEvents ${String(max)} -ErrorAction SilentlyContinue | ` +
-        "Select-Object TimeCreated, Id, Message | ConvertTo-Json -Depth 3 -Compress";
+        // The service name is read from the event properties, not from the message text, because the
+        // message is localized and its wording differs per id.
+        "Select-Object TimeCreated, Id, @{n='SrvName';e={$_.Properties[0].Value}}, Message | " +
+        "ConvertTo-Json -Depth 3 -Compress";
 
       const res = await runPowerShell<string>(script, { json: false, timeoutMs: 90_000 });
       if (!res.ok) {
@@ -264,9 +271,11 @@ export const monitorTools: ToolDefinition[] = [
 
         for (const row of rows) {
           const message = String(row.Message ?? "").replace(/\s+/g, " ");
-          const service = /service (?:(?:was|were)\s+)?([^.:]+?)\s+(?:terminated|stopped|started|had its start|did not)/i.exec(message)?.[1]
-            ?? /The (\S+) service/i.exec(message)?.[1]
-            ?? "unknown";
+          const service = String(row.SrvName ?? "") !== ""
+            ? String(row.SrvName)
+            : /service (?:(?:was|were)\s+)?([^.:]+?)\s+(?:terminated|stopped|started|had its start|did not)/i.exec(message)?.[1]
+              ?? /The (\S+) service/i.exec(message)?.[1]
+              ?? "unknown";
           if (name && !service.toLowerCase().includes(name.toLowerCase())) continue;
 
           const id = Number(row.Id ?? 0);
