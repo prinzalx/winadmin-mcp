@@ -120,7 +120,7 @@ the filesystem minifilter stack and a static look at an executable.
 | `check_elevation` | – | whether this server process runs elevated, its user, integrity level (from the mandatory-label SID, locale-independent) and the Windows version |
 | `get_security_events` | `event_id?` (defaults to the interesting set), `hours?` (default 24), `max_events?` (default 50) | Security-log entries narrowed to logon, privilege, process-creation and account events, each annotated with what the id means |
 | `list_drivers` | `name?` (substring), `state?`, `third_party_only?`, `max_drivers?` (default 400) | kernel drivers with state, start type, the `.sys` path on disk and its creator, which is read from the file version info because `Win32_SystemDriver` reports an empty manufacturer |
-| `get_minifilters` | – | the filesystem minifilter stack in altitude order — who sits on top of the disk and in which order they see I/O |
+| `get_minifilters` | – | the filesystem minifilter stack in altitude order — who sits on top of the disk and in which order they see I/O. The table is read from its numeric columns, so a localized Windows does not hide the list |
 | `analyze_pe` | `path` (full path to an `.exe`/`.dll`), `max_apis?` (default 60) | size, architecture, imported DLLs and API functions grouped by category (process, registry, file, network, service, sync, crypto) |
 
 Logon type in a Security event tells the story: type 2 is interactive at the keyboard, type 3 a

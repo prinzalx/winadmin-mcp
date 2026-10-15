@@ -257,15 +257,24 @@ export const securityTools: ToolDefinition[] = [
     docs:
       "Runs the same listing as `fltmc filters` and shows each filter with its altitude and frame. Altitude " +
       "decides the order of interception, so this answers \"which filter sees my file first\".\n" +
+      "The table is read from the numeric columns rather than the header, so a localized Windows does not hide " +
+      "the list.\n" +
       "This is where antivirus, backup agents and encryption tools register. A filter that is installed but not " +
       "started, or two filters at the same altitude, explains most \"the disk is slow but no process is busy\" " +
       "reports.\n" +
       "The listing needs elevation: unprivileged it answers with the raw access-denied text and an empty list.",
     input: z.object({}),
     handler: async () => {
+      // fltmc answers in the system OEM codepage, which the UTF-8 prelude of every call would decode
+      // into replacement characters ("H?he" for "Höhe"), so the console encoding is switched to the
+      // OEM codepage for the duration of the call.
       const script =
         "if (-not (Get-Command fltmc.exe -ErrorAction SilentlyContinue)) { Write-Output 'nofltmc'; exit }; " +
-        "$t = & fltmc.exe filters 2>&1 | Out-String; $t";
+        "$cp = [string](Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Nls\\CodePage' -ErrorAction SilentlyContinue).OEMCP; " +
+        "$prev = [Console]::OutputEncoding; " +
+        "try { if ($cp) { [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding([int]$cp) } } catch { }; " +
+        "$t = & fltmc.exe filters 2>&1 | Out-String; " +
+        "try { [Console]::OutputEncoding = $prev } catch { }; $t";
 
       const res = await runPowerShell<string>(script, { json: false, timeoutMs: 30_000 });
       if (!res.ok) {
@@ -276,22 +285,28 @@ export const securityTools: ToolDefinition[] = [
         return fail("fltmc.exe is not available on this system");
       }
 
-      // fltmc filters prints a table whose columns are name, instance count and frame, and whose
-      // rows are only useful once the altitude is added back from the registry. The frame column is
-      // printed only for instances that have one, so a data row may carry two or three columns; the
-      // header rows are skipped by the numeric second column.
-      const table: Array<{ name: string; instances: number; frame: string }> = [];
+      // fltmc filters prints name, instance count, altitude and frame. Both the header text and its
+      // separator row are localized, so a data row is recognized by its numeric columns alone, which
+      // works in every locale. Altitudes are kept as strings because some are fractional
+      // ("385250.5"), and older systems print the frame column only for instances that have one.
+      const table: Array<{ name: string; instances: number; altitude: string; frame: string }> = [];
       for (const line of raw.split("\n")) {
-        const row = /^(\S+)\s+(\d+)(?:\s+(\d+))?$/.exec(line.trim());
+        const row = /^(\S+)\s+(\d+)(?:\s+([\d.]+)(?:\s+(\d+))?)?\s*$/.exec(line.trim());
         if (row) {
-          table.push({ name: row[1] ?? "", instances: Number(row[2] ?? 0), frame: row[3] ?? "" });
+          table.push({
+            name: row[1] ?? "",
+            instances: Number(row[2] ?? 0),
+            altitude: row[3] ?? "",
+            frame: row[4] ?? "",
+          });
         }
       }
       if (table.length === 0 && /0x80070005|access is denied|Zugriff/i.test(raw)) {
         return fail(`get_minifilters: listing the filter instances needs elevation (${raw.split("\n").pop()?.trim() ?? "access denied"})`);
       }
 
-      const names = table.map((f) => f.name);
+      // Only for the rows that came without an altitude column the registry has to fill the gap.
+      const names = table.filter((f) => f.altitude === "").map((f) => f.name);
       const altitudes = new Map<string, string>();
       if (names.length > 0) {
         const regScript =
@@ -313,7 +328,10 @@ export const securityTools: ToolDefinition[] = [
         }
       }
 
-      const filters = table.map((f) => ({ ...f, altitude: altitudes.get(f.name) ?? "" }));
+      const filters = table.map((f) => ({
+        ...f,
+        altitude: f.altitude !== "" ? f.altitude : altitudes.get(f.name) ?? "",
+      }));
       return ok(
         { count: filters.length, filters, raw },
         `${String(filters.length)} minifilter(s) in the stack`,
